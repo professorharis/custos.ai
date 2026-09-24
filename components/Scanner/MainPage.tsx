@@ -51,6 +51,16 @@ import {
   type ScamResultWithFindings,
 } from './types';
 
+// ─────────────────────────────────────────────────────────────────────────
+// The shared `FollowUpMessage` type (./types) describes what gets PERSISTED
+// to Supabase (role, content, suggestions). The transient `streaming` flag
+// only exists in-memory while an assistant bubble is actively streaming —
+// it should never be written to storage. So instead of polluting the
+// shared/stored shape by adding `streaming` there, we extend it locally.
+// This is the type the live `followUpMessages` state array uses.
+// ─────────────────────────────────────────────────────────────────────────
+type LiveFollowUpMessage = FollowUpMessage & { streaming?: boolean };
+
 // Quick-suggestions (fallback — used only if the AI didn't send its own
 // contextual suggestions alongside a redirect message; see handleFollowUpSend)
 const REDIRECT_SUGGESTIONS = [
@@ -249,7 +259,7 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const [followUpMessages, setFollowUpMessages] = useState<FollowUpMessage[]>([]);
+  const [followUpMessages, setFollowUpMessages] = useState<LiveFollowUpMessage[]>([]);
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [pendingScan, setPendingScan] = useState<{ text: string; type: InputType } | null>(null);
   // Index of the message currently being streamed (so we can update it)
@@ -691,7 +701,7 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
       rafHandleRef.current = null;
     }
 
-    const placeholder: FollowUpMessage = { role: 'assistant', content: '', streaming: true };
+    const placeholder: LiveFollowUpMessage = { role: 'assistant', content: '', streaming: true };
     setFollowUpMessages((prev) => [...prev, placeholder]);
     setStreamingIndex(assistantIndex);
     setFollowUpLoading(true);
@@ -1104,8 +1114,12 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     setCustomTitle(row.title ?? deriveFallbackTitle(resolvedContent, resolvedType));
     setPinned(!!row.pinned);
     setActiveScanId(row.id);
-    // Restore the saved follow-up thread instead of wiping it.
-    setFollowUpMessages(((details.followUps ?? []) as FollowUpMessage[]).map((f) => ({ ...f, streaming: false })));
+    // Restore the saved follow-up thread instead of wiping it. Persisted
+    // records never carry `streaming`, so we explicitly reset it to false
+    // on restore — the extended local type makes the mapped result valid.
+    setFollowUpMessages(
+      ((details.followUps ?? []) as LiveFollowUpMessage[]).map((f) => ({ ...f, streaming: false }))
+    );
     setFollowUpLoading(false);
     setPendingScan(null);
     setStreamingIndex(null);
@@ -1174,7 +1188,10 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
         data.campaignStatus || 'Under Review',
         data.threatTypeLabel || 'Unclassified',
         data.targetBrand || 'Unknown',
-        false
+        // Final arg is `GeneratePdfReportOptions` (not a boolean flag).
+        // Passing an empty object uses the function's defaults — same
+        // behaviour as ReportViewerModal's download.
+        {}
       );
     } catch (err) {
       console.error('PDF download failed:', err);

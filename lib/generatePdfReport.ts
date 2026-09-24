@@ -47,6 +47,18 @@ function assessPillColors(assessment: string): { bg: RGB; text: RGB; border: RGB
   return { bg: C.slate100, text: C.slate500, border: C.slate300 };
 }
 
+/**
+ * Options for how the generated PDF should be delivered.
+ *  - save (default true): triggers doc.save(...) -> browser download.
+ *  - returnBlob (default false): resolves the function with a Blob instead
+ *    (used by ReportViewerModal to preview the PDF in an <iframe>).
+ * When returnBlob is true, `save` is ignored (the caller owns the blob).
+ */
+export interface GeneratePdfReportOptions {
+  save?: boolean;
+  returnBlob?: boolean;
+}
+
 export async function generatePDFReport(
   result:          ScamResult,
   inputType:       string,
@@ -58,8 +70,10 @@ export async function generatePDFReport(
   campaignStatus:  string,
   threatTypeLabel: string,
   targetBrand:     string,
-  openInBrowser = false,
-) {
+  options: GeneratePdfReportOptions = {},
+): Promise<Blob | void> {
+  const { save = true, returnBlob = false } = options;
+
   const { jsPDF } = await import('jspdf');
 
   const doc      = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
@@ -94,7 +108,12 @@ export async function generatePDFReport(
   const txt = (str: string, x: number, yy: number, opts: any = {}): number => {
     const { size = 10, color = C.slate700, weight = 'normal', font = 'helvetica', align = 'left', maxW, lhf = 1.4 } = opts;
     doc.setFontSize(size);
-    doc.setTextColor(...color);
+    // FIX: `color` was widening to `number[]` (not a fixed-length tuple)
+    // because it's destructured from an `any`-typed `opts` with a default
+    // value, which TS can't keep as `RGB` through the spread. Cast it back
+    // to `RGB` explicitly so `...color` satisfies jsPDF's setTextColor
+    // overloads (fixes "A spread argument must either have a tuple type...").
+    doc.setTextColor(...(color as RGB));
     doc.setFont(font, weight);
     if (maxW) {
       const lines = doc.splitTextToSize(str, maxW);
@@ -110,6 +129,18 @@ export async function generatePDFReport(
     doc.setFont('helvetica', 'normal');
     const lines = doc.splitTextToSize(str, maxW);
     return lines.length * size * lhf;
+  };
+
+  // FIX: jsPDF's doc.text(...) options type (TextOptionsLight) has no
+  // `maxW` property — that was never a real jsPDF option; it only worked
+  // inside the `txt()` helper above because `txt()` manually calls
+  // splitTextToSize() itself. For the two meta-table value cells (which
+  // are meant to stay on a single line and just get shortened if they're
+  // too wide), truncate the string to what actually fits first, then call
+  // doc.text() with no maxW option at all.
+  const fitSingleLine = (str: string, maxW: number): string => {
+    const lines = doc.splitTextToSize(str, maxW);
+    return lines[0] ?? str;
   };
 
   const hRule = (x1: number, yy: number, x2: number, color: RGB = C.slate300, lw = 0.5) => {
@@ -207,7 +238,9 @@ export async function generatePDFReport(
     doc.setFontSize(9.5);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...C.ink);
-    doc.text(lv, lLabelX + lLabelW + 6, labelY, { maxW: META_COL - (lLabelX + lLabelW + 6) - META_INNER });
+    // FIX: truncate to fit instead of passing an invalid `maxW` option.
+    const lvAvailW = META_COL - (lLabelX + lLabelW + 6) - META_INNER;
+    doc.text(fitSingleLine(lv, lvAvailW), lLabelX + lLabelW + 6, labelY);
 
     if (rLabel) {
       doc.setFontSize(8.5);
@@ -220,7 +253,9 @@ export async function generatePDFReport(
       doc.setFontSize(9.5);
       doc.setFont('helvetica', 'bold');
       doc.setTextColor(...(rCol ? severityMetaColor : C.ink));
-      doc.text(rv, rLabelX + rLabelW + 6, labelY, { maxW: (ML + CW) - (rLabelX + rLabelW + 6) - META_INNER });
+      // FIX: same truncation approach for the right-hand value cell.
+      const rvAvailW = (ML + CW) - (rLabelX + rLabelW + 6) - META_INNER;
+      doc.text(fitSingleLine(rv, rvAvailW), rLabelX + rLabelW + 6, labelY);
     }
   });
 
@@ -546,12 +581,12 @@ export async function generatePDFReport(
   txt('Custos Security Analysis Report', ML, fy2 + 6, { size: 8, color: C.slate400, align: 'left' });
   txt(`Page ${pageNum}`, PW - MR, fy2 + 6, { size: 8, color: C.slate400, align: 'right' });
 
-  if (openInBrowser) {
-    const blob = doc.output('blob');
-    const url  = URL.createObjectURL(blob);
-    window.open(url, '_blank');
-    setTimeout(() => URL.revokeObjectURL(url), 30_000);
-  } else {
+  // ── Deliver: blob for preview, or trigger a browser download ──
+  if (returnBlob) {
+    return doc.output('blob');
+  }
+
+  if (save) {
     doc.save(`Custos_Security_Report_${reportId}.pdf`);
   }
 }

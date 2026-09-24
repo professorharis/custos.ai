@@ -531,9 +531,27 @@ interface ReportDocumentProps {
   inputContent: string;
   inputType: string;
   data?: ReportDocumentData;
+  /**
+   * When true, hides any in-component download control. ReportPanel passes
+   * this because it renders its own Download button in the panel header
+   * and handles the PDF generation itself — the embedded <ReportDocument />
+   * should not show a second, redundant download button.
+   */
+  hideDownload?: boolean;
 }
 
-export function ReportDocument({ result, inputContent, inputType, data }: ReportDocumentProps) {
+export function ReportDocument({
+  result,
+  inputContent,
+  inputType,
+  data,
+  // Accepted for API compatibility with ReportPanel, which renders its own
+  // download button and passes `hideDownload` to suppress any duplicate here.
+  // This component currently renders no download control of its own, so the
+  // flag is intentionally unused — prefixed with `_` to signal that to
+  // ESLint's no-unused-vars rule.
+  hideDownload: _hideDownload,
+}: ReportDocumentProps) {
   const doc = data ?? buildReportDocumentData(result, inputContent, inputType);
   return (
     <div className="p-1 sm:p-2 space-y-7">

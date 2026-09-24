@@ -53,7 +53,13 @@ export function AvatarMenu({ user, onLogout, onOpenModal, plan: planProp, expand
   // saved, this same avatar_url is what renders everywhere instantly.
   const displayName = profile?.name || user?.user_metadata?.name || user?.email?.split('@')[0] || 'User';
   const email = profile?.email || user?.email || '';
-  const plan: 'Free' | 'Pro' = profile?.plan ?? planProp ?? 'Free';
+
+  // `profile.plan` comes back from Supabase as a plain string, but the UI
+  // only recognises two values. Narrow it here so `plan` has the strict
+  // union type, and anything unexpected (old data, typos, case differences,
+  // null) falls back to the prop override or 'Free'.
+  const rawPlan = (profile?.plan ?? planProp ?? '').toString();
+  const plan: 'Free' | 'Pro' = rawPlan.toLowerCase() === 'pro' ? 'Pro' : 'Free';
 
   useEffect(() => {
     if (!open) return;
