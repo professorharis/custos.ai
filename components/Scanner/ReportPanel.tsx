@@ -16,7 +16,7 @@ import {
 import { getRiskLevelLabel } from '@/lib/scannerHelpers';
 import { ReportDocument } from '@/components/ReportDocument';
 import { DocumentView } from '@/components/DocumentView';
-import { generatePDFFromElement } from '@/lib/docxPdfgenerate';
+import { generateA4Pdf } from '@/lib/generateA4Pdf';
 import type { ScamResultWithFindings } from './types';
 
 export interface ReportPanelProps {
@@ -29,16 +29,11 @@ export interface ReportPanelProps {
   onClose: () => void;
   onToggleFullScreen: () => void;
   /**
-   * Used for `mode === 'presentation'` (<ReportDocument />). This should be
-   * wired by the parent to call `generatePDFReport` from
-   * `lib/generatePdfReport.ts` — the SAME function ReportViewerModal calls —
-   * so the presentation-mode download matches the modal's PDF exactly.
-   *
-   * NOT used for `mode === 'document'` (<DocumentView />): that mode
-   * captures its own DOM here via generatePdfDocument.ts, so the download
-   * matches exactly what's on screen in that card.
+   * @deprecated No longer used. The panel now downloads whatever is open
+   * (DocumentView or ReportDocument) as an A4 PDF by itself.
+   * Kept optional so existing parents don't break.
    */
-  onDownload: () => void;
+  onDownload?: () => void;
   isMobile: boolean;
   onOpenMobileMenu: () => void;
 }
@@ -52,16 +47,15 @@ export function ReportPanel({
   inputType,
   onClose,
   onToggleFullScreen,
-  onDownload,
   isMobile,
   onOpenMobileMenu,
 }: ReportPanelProps) {
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
-  // Wraps the actual rendered <DocumentView /> so we can capture exactly
-  // what's on screen (same layout, same data) when mode === 'document'.
-  const documentViewRef = useRef<HTMLDivElement>(null);
+  // Wraps whichever report is currently on screen (document OR presentation),
+  // so the PDF is generated from exactly what the user is looking at.
+  const contentRef = useRef<HTMLDivElement>(null);
 
   const handleCopy = useCallback(async () => {
     if (!result) return;
@@ -96,33 +90,31 @@ export function ReportPanel({
   }, [result]);
 
   // ─────────────────────────────────────────────────────────────────────
-  // Download handler, branched by panel mode:
-  //  - document (<DocumentView /> is on screen): capture the live DOM via
-  //    generatePDFFromElement (html2canvas-pro) so the PDF is pixel-for-
-  //    pixel the same layout/data the user is currently looking at here.
-  //  - presentation (<ReportDocument /> is on screen): delegate to the
-  //    parent's onDownload, which calls generatePDFReport directly
-  //    (lib/generatePdfReport.ts) — the exact same function/output as
-  //    ReportViewerModal, so both stay identical.
+  // Download: whichever report is open is exported as a multi-page A4 PDF.
+  //  - mode "document"     → <DocumentView />   → Custos_Document_Report_<id>.pdf
+  //  - mode "presentation" → <ReportDocument /> → Custos_Presentation_Report_<id>.pdf
   // ─────────────────────────────────────────────────────────────────────
   const handleDownloadClick = useCallback(async () => {
-    if (mode === 'presentation') {
-      onDownload();
-      return;
-    }
-
-    if (!result || !documentViewRef.current) return;
+    if (!result || !contentRef.current || downloading) return;
 
     setDownloading(true);
     try {
-      const fileName = `Custos_Security_Report_${result.scanId ?? 'report'}`;
-      await generatePDFFromElement(documentViewRef.current, { fileName });
+      const isDocument = mode === 'document';
+      const id = result.scanId ?? 'report';
+
+      await generateA4Pdf(contentRef.current, {
+        fileName: `Custos_${isDocument ? 'Document' : 'Presentation'}_Report_${id}`,
+        // DocumentView has its own side padding; ReportDocument needs page margins
+        paddingX: isDocument ? 0 : 48,
+        footerLabel: isDocument ? 'Custos AI Security Analysis Report' : 'Custos AI Threat Intelligence Report',
+      });
     } catch (err) {
       console.error('PDF download failed:', err);
+      alert('Unable to generate PDF. Please try again.');
     } finally {
       setDownloading(false);
     }
-  }, [mode, onDownload, result]);
+  }, [mode, result, downloading]);
 
   useEffect(() => {
     if (!open) return;
@@ -168,7 +160,7 @@ export function ReportPanel({
             <button
               onClick={handleDownloadClick}
               disabled={downloading}
-              title="Download PDF"
+              title="Download PDF (A4)"
               className="p-2 rounded-lg text-stone-500 hover:bg-stone-100 hover:text-stone-800 transition-colors disabled:opacity-50"
             >
               {downloading ? (
@@ -217,18 +209,18 @@ export function ReportPanel({
 
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 scyra-scroll">
           {result && (
-            mode === 'document' ? (
-              <div ref={documentViewRef}>
+            <div ref={contentRef}>
+              {mode === 'document' ? (
                 <DocumentView result={result} inputContent={inputContent} inputType={inputType} />
-              </div>
-            ) : (
-              <ReportDocument
-                result={result}
-                inputContent={inputContent}
-                inputType={inputType}
-                hideDownload
-              />
-            )
+              ) : (
+                <ReportDocument
+                  result={result}
+                  inputContent={inputContent}
+                  inputType={inputType}
+                  hideDownload
+                />
+              )}
+            </div>
           )}
         </div>
       </div>

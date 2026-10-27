@@ -91,7 +91,8 @@ function buildScanMetaRowsFallback(
       } catch { /* non‑parseable URL */ }
 
       return [
-        { l: 'URL',      lv: rawUrl.length > 55 ? rawUrl.slice(0, 52) + '…' : rawUrl,
+        // Truncation removed — full URL is shown
+        { l: 'URL',      lv: rawUrl,
           r: 'Domain',   rv: domain, rColored: false },
         { l: 'Protocol', lv: protocol,
           r: 'SSL',      rv: ssl,    rColored: ssl === 'Absent' },
@@ -108,8 +109,9 @@ function buildScanMetaRowsFallback(
       const hasAttach = /attach|\.pdf|\.zip|\.docx|\.exe/i.test(inputContent);
 
       return [
+        // Truncation removed — full subject is shown
         { l: 'Sender',      lv: sender,
-          r: 'Subject',     rv: subject.length > 45 ? subject.slice(0, 42) + '…' : subject, rColored: false },
+          r: 'Subject',     rv: subject, rColored: false },
         { l: 'Links Found', lv: `${urls.length}`,
           r: 'Attachments', rv: hasAttach ? 'Detected' : 'None', rColored: hasAttach },
         { l: 'Emails Found', lv: `${emails.length}`,
@@ -247,7 +249,7 @@ function SeverityBadge({ riskLevel }: { riskLevel: string }) {
   } as const;
   const m = cfg[riskLevel as keyof typeof cfg] ?? cfg.low;
   return (
-    <span className={`inline-flex items-center px-3 py-1 rounded text-[11px] font-bold tracking-widest uppercase ${m.cls}`}>
+    <span className={`inline-flex items-center px-3 py-1.5 rounded text-[12px] font-bold tracking-wider uppercase whitespace-nowrap ${m.cls}`}>
       {m.label}
     </span>
   );
@@ -288,35 +290,37 @@ function Masthead({ result, data }: { result: ScamResult; data: ReportDocumentDa
   const allRows = [...fixedRows, ...scanMetaRows];
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3 pb-4 border-b-2 border-slate-700">
-        <div>
-          <div className="text-lg sm:text-xl font-black text-slate-900 tracking-tight leading-none">
-            Custos AI
-          </div>
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-3 pb-4 border-b-2 border-slate-800">
+        <div className="text-[22px] font-black text-slate-900 tracking-tight leading-none">
+          Custos AI
         </div>
         <SeverityBadge riskLevel={result.riskLevel} />
       </div>
 
-      <h1 className="text-xl sm:text-2xl font-bold text-slate-900 leading-tight">
+      <h1 className="text-[22px] sm:text-[24px] font-bold text-slate-900 leading-snug tracking-tight">
         {reportTitle}
       </h1>
 
-      <div className="border border-slate-300 rounded-lg overflow-hidden text-xs sm:text-sm divide-y divide-slate-200">
+      <div className="border border-slate-300 rounded-lg overflow-hidden text-[14px] divide-y divide-slate-200">
         {allRows.map((row, i) => (
           <div
             key={i}
             className="grid grid-cols-1 sm:grid-cols-2 divide-y sm:divide-y-0 divide-slate-200"
           >
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-4 py-3 min-w-0 sm:border-r border-slate-200">
-              <span className="text-slate-500 whitespace-nowrap shrink-0">{row.l}</span>
-              <span className="text-slate-900 font-bold break-words min-w-0">{row.lv}</span>
+            <div className="px-4 py-3 min-w-0 sm:border-r border-slate-200">
+              <div className="text-[12px] font-medium uppercase tracking-wide text-slate-500 mb-0.5">
+                {row.l}
+              </div>
+              <div className="text-slate-900 font-semibold leading-snug break-words">{row.lv}</div>
             </div>
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-4 py-3 min-w-0">
-              <span className="text-slate-500 whitespace-nowrap shrink-0">{row.r}</span>
-              <span className={`font-bold break-words min-w-0 ${row.rColored ? severityCls : 'text-slate-900'}`}>
+            <div className="px-4 py-3 min-w-0">
+              <div className="text-[12px] font-medium uppercase tracking-wide text-slate-500 mb-0.5">
+                {row.r}
+              </div>
+              <div className={`leading-snug break-words ${row.rColored ? severityCls : 'text-slate-900 font-semibold'}`}>
                 {row.rv}
-              </span>
+              </div>
             </div>
           </div>
         ))}
@@ -335,10 +339,10 @@ function ExecutiveSummary({ result }: { result: ScamResult }) {
 
   return (
     <div className={`rounded-r-lg px-5 py-4 ${s.wrap}`}>
-      <div className={`text-xs font-bold uppercase tracking-widest mb-2 ${s.title}`}>
+      <div className={`text-[13px] font-bold uppercase tracking-wider mb-2 ${s.title}`}>
         Executive Summary
       </div>
-      <p className="text-sm text-slate-700 leading-relaxed break-words">{result.explanation}</p>
+      <p className="text-[15px] text-slate-800 leading-[1.7] break-words">{result.explanation}</p>
     </div>
   );
 }
@@ -349,12 +353,12 @@ function InterceptedContent({ inputContent, inputType }: { inputContent: string;
   return (
     <section className="space-y-3">
       <SectionHeading n={1} title="Intercepted Content Analysis" />
-      <p className="text-sm text-slate-600">
+      <p className="text-[14px] text-slate-700 leading-relaxed">
         {inputType === 'url'
           ? 'The malicious artifact consists of the following URL submitted for analysis:'
           : `The malicious artifact consists of the following ${inputType === 'sms' ? 'SMS text string' : 'message content'} transmitted to the target device:`}
       </p>
-      <div className="bg-slate-900 text-blue-100 rounded-lg p-4 font-mono text-xs sm:text-sm break-all whitespace-pre-wrap leading-relaxed">
+      <div className="bg-slate-900 text-blue-100 rounded-lg p-4 font-mono text-[13px] break-all whitespace-pre-wrap leading-relaxed">
         {inputContent || '(no content provided)'}
       </div>
     </section>
@@ -363,12 +367,7 @@ function InterceptedContent({ inputContent, inputType }: { inputContent: string;
 
 // ─── Section 2: Threat Indicators ──────────────────────────────────────────
 
-// UPDATED FindingsList – clean bullet, heading bold, body normal, NO extra risk line
-function FindingsList({
-  findings,
-}: {
-  findings: string[];
-}) {
+function FindingsList({ findings }: { findings: string[] }) {
   return (
     <ul className="space-y-2.5">
       {findings.map((f, fi) => {
@@ -378,13 +377,13 @@ function FindingsList({
         const body    = hasHeading ? f.slice(ci + 1).trim() : f;
 
         return (
-          <li key={fi} className="flex gap-2 text-[12.5px] leading-relaxed">
-            <span className="text-slate-900 font-black flex-shrink-0 leading-5 mt-0.5">•</span>
+          <li key={fi} className="flex gap-2 text-[14px] leading-[1.6]">
+            <span className="text-slate-900 font-black flex-shrink-0 mt-px">•</span>
             <span className="break-words min-w-0">
               {heading && (
                 <span className="font-bold text-slate-900 mr-1">{heading}</span>
               )}
-              <span className="text-slate-700">{body}</span>
+              <span className="text-slate-800">{body}</span>
             </span>
           </li>
         );
@@ -398,7 +397,7 @@ function IndicatorsTable({ indicators }: { indicators: ThreatIndicator[] }) {
     return (
       <section className="space-y-3">
         <SectionHeading n={2} title="Technical Threat Indicators &amp; Breakdown" />
-        <p className="text-sm text-slate-500 border border-slate-200 rounded-lg p-4">
+        <p className="text-[14px] text-slate-600 border border-slate-200 rounded-lg p-4">
           No high‑confidence technical indicators were extracted from this content.
         </p>
       </section>
@@ -411,17 +410,17 @@ function IndicatorsTable({ indicators }: { indicators: ThreatIndicator[] }) {
 
       {/* Desktop table */}
       <div className="hidden sm:block border border-slate-300 rounded-lg overflow-hidden">
-        <table className="w-full text-sm table-fixed">
+        <table className="w-full text-[14px] table-auto">
           <colgroup>
-            <col style={{ width: '26%' }} />
-            <col style={{ width: '22%' }} />
+            <col style={{ width: '28%' }} />
+            <col style={{ width: '17%' }} />
             <col />
           </colgroup>
           <thead>
-            <tr className="bg-slate-900 text-white text-xs">
-              <th className="text-left font-bold px-4 py-3 tracking-wide">Element Analyzed</th>
-              <th className="text-left font-bold px-3 py-3 tracking-wide border-l border-slate-700">Assessment</th>
-              <th className="text-left font-bold px-4 py-3 tracking-wide border-l border-slate-700">
+            <tr className="bg-slate-900 text-white text-[13px]">
+              <th className="text-left font-bold px-4 py-3">Element Analyzed</th>
+              <th className="text-left font-bold px-3 py-3 border-l border-slate-700">Assessment</th>
+              <th className="text-left font-bold px-4 py-3 border-l border-slate-700">
                 Technical Context &amp; Findings
               </th>
             </tr>
@@ -430,21 +429,20 @@ function IndicatorsTable({ indicators }: { indicators: ThreatIndicator[] }) {
             {indicators.map((row, idx) => (
               <tr key={idx} className={idx % 2 === 1 ? 'bg-slate-50' : 'bg-white'}>
                 <td className="align-top px-4 py-4 border-r border-slate-200">
-                  <div className="font-bold text-slate-900 text-[13px] leading-snug break-words">
+                  <div className="font-bold text-slate-900 text-[14px] leading-snug break-words">
                     {row.element}
                   </div>
-                  <div className="text-[11px] text-slate-500 mt-1 break-all leading-relaxed">
+                  <div className="text-[12.5px] text-slate-600 mt-1 break-all leading-relaxed">
                     {row.value}
                   </div>
                 </td>
                 <td className="align-top px-3 py-4 border-r border-slate-200">
-                  <span className={`font-bold text-[11px] leading-snug uppercase tracking-wide ${ASSESS_CLS[row.assessment] ?? 'text-slate-500'}`}>
+                  <span className={`font-bold text-[12px] leading-snug uppercase tracking-wide ${ASSESS_CLS[row.assessment] ?? 'text-slate-600'}`}>
                     {row.assessment}
                   </span>
                 </td>
                 <td className="align-top px-4 py-4">
                   <FindingsList findings={row.findings} />
-                  {/* EXTRA RISK LINE REMOVED – matches your exact table layout */}
                 </td>
               </tr>
             ))}
@@ -458,22 +456,21 @@ function IndicatorsTable({ indicators }: { indicators: ThreatIndicator[] }) {
           <div key={idx} className="border border-slate-300 rounded-lg overflow-hidden">
             <div className="bg-slate-900 px-4 py-3 space-y-1">
               <div className="flex items-start justify-between gap-2">
-                <span className="font-bold text-[13px] text-white leading-snug break-words flex-1 min-w-0">
+                <span className="font-bold text-[14px] text-white leading-snug break-words flex-1 min-w-0">
                   {row.element}
                 </span>
-                <span className={`text-[10px] font-bold uppercase tracking-wide flex-shrink-0 px-2 py-0.5 rounded bg-white/10 whitespace-nowrap ${ASSESS_CLS[row.assessment] ?? 'text-slate-300'}`}>
+                <span className={`text-[11px] font-bold uppercase tracking-wide flex-shrink-0 px-2 py-0.5 rounded bg-white/10 whitespace-nowrap ${ASSESS_CLS[row.assessment] ?? 'text-slate-300'}`}>
                   {row.assessment}
                 </span>
               </div>
               {row.value && (
-                <div className="text-[11px] text-slate-400 break-all leading-relaxed">
+                <div className="text-[12.5px] text-slate-300 break-all leading-relaxed">
                   {row.value}
                 </div>
               )}
             </div>
             <div className="bg-white px-4 py-3">
               <FindingsList findings={row.findings} />
-              {/* EXTRA RISK LINE REMOVED – matches your exact table layout */}
             </div>
           </div>
         ))}
@@ -490,11 +487,11 @@ function Recommendations({ safetyTips }: { safetyTips: SafetyTip[] }) {
       <SectionHeading n={3} title="Operational Recommendations &amp; Incident Mitigation" />
       <ul className="space-y-3">
         {safetyTips.map((item, idx) => (
-          <li key={idx} className="flex gap-2 text-sm leading-relaxed">
-            <span className="font-black text-slate-900 flex-shrink-0 leading-5">•</span>
+          <li key={idx} className="flex gap-2 text-[14.5px] leading-[1.65]">
+            <span className="font-black text-slate-900 flex-shrink-0">•</span>
             <span className="break-words min-w-0">
               <span className="font-bold text-slate-900">{item.headline}:</span>{' '}
-              <span className="text-slate-700">{item.tip}</span>
+              <span className="text-slate-800">{item.tip}</span>
             </span>
           </li>
         ))}
@@ -507,7 +504,7 @@ function Recommendations({ safetyTips }: { safetyTips: SafetyTip[] }) {
 
 function DossierFooter() {
   return (
-    <div className="pt-4 flex justify-center text-[11px] text-slate-400">
+    <div className="pt-4 flex justify-center text-[12px] text-slate-500">
       <span>Generated by Custos AI</span>
     </div>
   );
@@ -518,7 +515,7 @@ function DossierFooter() {
 function SectionHeading({ n, title }: { n: number; title: string }) {
   return (
     <h2
-      className="text-sm sm:text-[15px] font-bold text-slate-900 border-l-4 border-blue-600 pl-3 leading-snug"
+      className="text-[16px] sm:text-[17px] font-bold text-slate-900 border-l-4 border-blue-600 pl-3 leading-snug"
       dangerouslySetInnerHTML={{ __html: `${n}. ${title}` }}
     />
   );
@@ -548,13 +545,12 @@ export function ReportDocument({
   // Accepted for API compatibility with ReportPanel, which renders its own
   // download button and passes `hideDownload` to suppress any duplicate here.
   // This component currently renders no download control of its own, so the
-  // flag is intentionally unused — prefixed with `_` to signal that to
-  // ESLint's no-unused-vars rule.
+  // flag is intentionally unused.
   hideDownload: _hideDownload,
 }: ReportDocumentProps) {
   const doc = data ?? buildReportDocumentData(result, inputContent, inputType);
   return (
-    <div className="p-1 sm:p-2 space-y-7">
+    <div className="p-1 sm:p-2 space-y-8">
       <Masthead result={result} data={doc} />
       <ExecutiveSummary result={result} />
       <InterceptedContent inputContent={inputContent} inputType={inputType} />

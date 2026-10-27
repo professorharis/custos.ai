@@ -1,10 +1,10 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { ArrowUp, Menu, Pin, Share2, Square } from 'lucide-react';
+import { ArrowUp, Menu, Pin, RotateCcw, Share2, Square } from 'lucide-react';
 import type { ScamResult } from '@/lib/types';
 import { useScanResult } from '@/context/ScanResultContext';
-import { getContextLabels, getRiskLevelLabel } from '@/lib/scannerHelpers';
+import { getRiskLevelLabel } from '@/lib/scannerHelpers';
 import { supabase } from '@/lib/supabase';
 import { generatePDFReport } from '@/lib/generatePdfReport';
 import { buildReportDocumentData } from '@/components/ReportDocument';
@@ -29,11 +29,10 @@ import {
   FollowUpUserBubble,
   MobileChatHeaderMenu,
   NewScanConfirmModal,
-  ScanStepFlow,
+  ThinkingBlock,
   UserMessage,
 } from './ChatArea';
 import {
-  CHECKLIST_STEPS,
   FONT_BODY,
   FONT_HEADING,
   FOLLOWUP_PLACEHOLDER,
@@ -42,27 +41,19 @@ import {
   QUICK_ACTIONS,
   SAMPLE_SENTENCES,
   TYPE_HEADER_LABEL,
-  detectInputType,
   getMessageTypography,
   isSameContent,
-  looksLikeNewScanContent,
   type FollowUpMessage,
   type InputType,
   type ScamResultWithFindings,
 } from './types';
 
-// ─────────────────────────────────────────────────────────────────────────
-// The shared `FollowUpMessage` type (./types) describes what gets PERSISTED
-// to Supabase (role, content, suggestions). The transient `streaming` flag
-// only exists in-memory while an assistant bubble is actively streaming —
-// it should never be written to storage. So instead of polluting the
-// shared/stored shape by adding `streaming` there, we extend it locally.
-// This is the type the live `followUpMessages` state array uses.
-// ─────────────────────────────────────────────────────────────────────────
+// ── Real logo (put your file in public/) ─────────────────────────────────
+const LOGO_SRC = '/logo.png';
+const LOGO_ALT = 'Custos AI';
+
 type LiveFollowUpMessage = FollowUpMessage & { streaming?: boolean };
 
-// Quick-suggestions (fallback — used only if the AI didn't send its own
-// contextual suggestions alongside a redirect message; see handleFollowUpSend)
 const REDIRECT_SUGGESTIONS = [
   "🛡 Explain this risk score",
   "📧 How does email phishing work?",
@@ -82,75 +73,48 @@ interface ScannerProps {
   }) => void;
 }
 
-const PAGE_WASH_BG = 'bg-[#F7F6F3]';
-const MAIN_COLUMN_BG = 'bg-[#F7F6F3]';
-
-// How close (in px) to the bottom of the scroll container counts as
-// "already at the bottom" — only then do we auto-scroll on new streamed content.
+const PAGE_WASH_BG = 'bg-[#F8F8F8]';
+const MAIN_COLUMN_BG = 'bg-[#FCFCFC]';
 const AUTO_SCROLL_THRESHOLD_PX = 120;
-
-// Minimum time (ms) the "switching history" skeleton stays visible for.
-// Without a floor like this, a fast state update can flip the skeleton
-// on and off within the same frame, making it look like it never showed
-// at all — so we always hold it for at least this long.
 const HISTORY_SWITCH_SKELETON_MS = 380;
-
-// Small delay (ms) used when a pending "new scan" is confirmed from the
-// follow-up flow — lets the hero/home screen actually flash into view for
-// a beat before the new scan kicks off, instead of jumping straight past it.
 const NEW_SCAN_HOME_FLASH_MS = 220;
-
-// How long a fetch is allowed to run before we treat it as timed out and
-// show the "Request timed out" card instead of hanging indefinitely.
 const REQUEST_TIMEOUT_MS = 35000;
+const MIN_SCAN_DURATION_MS = 3500;
 
-const WELCOME_HEADLINES: { title: string; subtitle: string }[] = [
-  {
-    title: 'Custos AI Security Scanner',
-    subtitle: "Paste a message, SMS, email, or link — we'll check it for scams, phishing, and fraud in seconds.",
-  },
-  {
-    title: 'What are we checking today?',
-    subtitle: 'Paste a message, SMS, email, or link and get an instant risk breakdown.',
-  },
-  {
-    title: 'Stay one step ahead of scammers',
-    subtitle: "Drop in any text, email, or link — we'll flag anything suspicious in seconds.",
-  },
-  {
-    title: 'Scan first, trust later',
-    subtitle: 'Paste a message, SMS, email, or link to see how safe it really is.',
-  },
-];
+// How many scans the sidebar loads. (Was 8 → the oldest item disappeared
+// every time a new scan was added.)
+const HISTORY_LIMIT = 50;
 
-// Rebuilds the `details` JSON blob that gets saved into the `scans` table,
-// merging in whatever follow-up thread should be persisted alongside it.
-// Centralized here so runScan's initial insert and handleFollowUpSend's
-// later updates always shape this object the same way.
-function buildScanDetails(result: ScamResultWithFindings | null, followUps: FollowUpMessage[]) {
+function buildScanDetails(
+  result: ScamResultWithFindings | null,
+  followUps: FollowUpMessage[],
+  scanType?: InputType,
+  preMessages: FollowUpMessage[] = []
+) {
+  const r = result as any;
   return {
     explanation: result?.explanation ?? '',
     safetyTips: result?.safetyTips ?? [],
     scanId: result?.scanId,
+    // saved so a reopened chat shows the SAME style (SMS stays SMS, email stays email)
+    scanType: scanType ?? null,
     findings: result?.findings ?? [],
     recommendation: result?.recommendation ?? null,
-    // Follow-up Q&A thread travels with the scan record so it survives a
-    // refresh or switching to another history item and back. Assistant
-    // turns are saved with streaming cleared/omitted.
+    // extra fields so a reopened chat shows the same result
+    attemptLabel: result?.attemptLabel ?? null,
+    threatType: result?.threatType ?? null,
+    indicators: r?.indicators ?? [],
+    metaRows: r?.metaRows ?? [],
+    targetBrand: r?.targetBrand ?? null,
+    status: r?.status ?? null,
+    cvss: r?.cvss ?? null,
+    reportTitle: r?.reportTitle ?? null,
+    // general chat that happened BEFORE the scan in the same conversation
+    preMessages: preMessages.map((f) => ({ role: f.role, content: f.content, suggestions: f.suggestions })),
     followUps: followUps.map((f) => ({ role: f.role, content: f.content, suggestions: f.suggestions })),
   };
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Builds a specific, content-aware title for a scan instead of a generic
-// "Text/Email/SMS/URL Scan Analysis" label — used as the fallback whenever
-// the AI-generated title (from /api/generate-title) isn't available yet,
-// failed, or wasn't saved on an older row.
-//   - url   -> "paypal-secure.com Link Analysis"
-//   - email -> subject line or sender, e.g. "Account Verification — Email Analysis"
-//   - sms/text -> first few words of the message, e.g. "Your account has been… — SMS Analysis"
-// Always falls back to the generic TYPE_HEADER_LABEL if nothing usable is found.
-// ─────────────────────────────────────────────────────────────────────────
 function deriveFallbackTitle(content: string, type: InputType): string {
   const trimmed = (content || '').trim();
   if (!trimmed) return TYPE_HEADER_LABEL[type];
@@ -188,11 +152,39 @@ function deriveFallbackTitle(content: string, type: InputType): string {
   return `${preview}${words.length > 6 ? '…' : ''} — ${suffix}`;
 }
 
-// ─────────────────────────────────────────────────────────────────────────
-// Skeleton shown briefly while switching between history items — mirrors
-// the actual layout (user bubble + AI response lines) so the swap feels
-// like a real loading state instead of an unexplained blur.
-// ─────────────────────────────────────────────────────────────────────────
+// ── Random greeting builder (picks once per mount) ───────────────────────
+function buildGreeting(rawName: string): string {
+  const h = new Date().getHours();
+  const dayPart =
+    h >= 5 && h < 12
+      ? 'Morning'
+      : h >= 12 && h < 17
+      ? 'Afternoon'
+      : h >= 17 && h < 22
+      ? 'Evening'
+      : 'Hello';
+
+  const withName = [
+    `${dayPart}, ${rawName}`,
+    `Hey ${rawName}`,
+    `Welcome back, ${rawName}`,
+    `Good to see you, ${rawName}`,
+    `Hi ${rawName}`,
+    `Hello ${rawName}`,
+  ];
+
+  const withoutName = [
+    dayPart === 'Hello' ? 'Hello' : `Good ${dayPart.toLowerCase()}`,
+    'Welcome back',
+    'Hey there',
+    'Ready when you are',
+    'How can I help?',
+  ];
+
+  const pool = rawName ? withName : withoutName;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 function ChatSwitchSkeleton() {
   return (
     <div className="px-4 sm:px-5 pt-6 pb-6 animate-pulse">
@@ -216,6 +208,129 @@ function ChatSwitchSkeleton() {
   );
 }
 
+const TYPE_PLACEHOLDER: Record<InputType, string> = {
+  text: 'What would you like to scan today?',
+  sms: 'Paste an SMS to check…',
+  email: 'Paste an email to check…',
+  url: 'Paste a link to check…',
+};
+
+const SUGGESTION_TEXT: Record<InputType, string> = {
+  text: 'Analyze a suspicious message',
+  sms: 'Check if an SMS is a scam',
+  email: 'Scan an email for phishing',
+  url: 'Verify if a link is safe',
+};
+
+const TYPE_SHORT_LABEL: Record<InputType, string> = {
+  text: 'Text',
+  sms: 'SMS',
+  email: 'Email',
+  url: 'URL',
+};
+
+function TypeSegmented({
+  value,
+  chosen,
+  onSelect,
+  disabled,
+}: {
+  value: InputType;
+  /** false = nothing picked yet (auto-detect) → no pill is highlighted */
+  chosen: boolean;
+  onSelect: (t: InputType) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div role="tablist" aria-label="Scan type" className="inline-flex items-center rounded-lg bg-[#F5F4EF] p-0.5">
+      {QUICK_ACTIONS.map((a) => {
+        const active = chosen && a.id === value;
+        return (
+          <button
+            key={a.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            disabled={disabled}
+            onClick={() => onSelect(a.id)}
+            className={`px-2.5 sm:px-3 py-1 rounded-md text-[13px] sm:text-[14px] transition-colors disabled:opacity-60 ${
+              active
+                ? 'bg-white text-stone-900 font-medium shadow-sm ring-1 ring-black/10'
+                : 'text-stone-600 hover:text-stone-900'
+            }`}
+          >
+            {TYPE_SHORT_LABEL[a.id]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+const VALID_TYPES: InputType[] = ['text', 'sms', 'email', 'url'];
+
+// Placeholder shown for the first moment, until the AI writes the real steps
+const READING_STEP: Record<InputType, string> = {
+  email: 'Reading the email',
+  sms: 'Reading the SMS',
+  url: 'Reading the link',
+  text: 'Reading the message',
+};
+
+const LINK_TOKEN_RE = /^(?:https?:\/\/|www\.)\S+$|^[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:\/\S*)?$/i;
+
+// Decide the display style of the user's content:
+//  - only a link                      → link card
+//  - From:/Subject: headers           → email style
+//  - text + link inside (an SMS)      → keeps SMS / email / text (NOT link card)
+function refineScanType(text: string, classified: InputType, selected: InputType): InputType {
+  const trimmed = text.trim();
+  const tokens = trimmed.split(/\s+/).filter(Boolean);
+  const linkTokens = tokens.filter((t) => LINK_TOKEN_RE.test(t.replace(/[.,;:!?)]+$/, '')));
+  if (tokens.length > 0 && linkTokens.length === tokens.length) return 'url';
+  if (/^\s*(from|subject)\s*:/im.test(trimmed)) return 'email';
+  if (selected === 'sms' || selected === 'email') return selected;
+  return classified === 'url' ? 'sms' : classified;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Local "is this a question / greeting?" routing (fast path + fallback)
+// ─────────────────────────────────────────────────────────────────────────
+
+const URL_IN_TEXT_RE = /(?:https?:\/\/|www\.)\S+|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|co|pk|info|xyz|top|link|app|ly|me|biz|online|site|club|ru|cn)\b/i;
+const EMAIL_HEADER_RE = /^\s*(from|to|subject|date|reply-to)\s*:/im;
+const PHONE_IN_TEXT_RE = /(?:\+|00)?\d[\d\s().-]{8,}\d/;
+
+const GREETING_RE =
+  /^(hi+|hello+|hey+|salam|assalam[\w\s-]*|aoa|good\s+(morning|afternoon|evening|night)|thanks?|thank\s+you|ok(ay)?|bye|who are you|what can you do)[\s!.?]*$/i;
+
+const STRONG_QUESTION_START_RE =
+  /^(what|why|how|when|where|who|which|explain|tell me|define|describe|difference|compare|give me|show me|help me|teach me|suggest|is it safe|can you|could you|kya|kia|kaise|kese|kyun|kyon|kab|kahan|kaun|kon|mujhe|batao|bataiye|samjhao|btao)\b/i;
+
+/** The text contains something that looks like scannable content (link, email headers, phone number). */
+function hasScanArtifacts(text: string): boolean {
+  return URL_IN_TEXT_RE.test(text) || EMAIL_HEADER_RE.test(text) || PHONE_IN_TEXT_RE.test(text);
+}
+
+/** Lenient check: greeting or a question about security / safety / anything general. */
+function looksLikeQuestion(text: string): boolean {
+  const t = text.trim();
+  if (!t || hasScanArtifacts(t)) return false;
+  if (GREETING_RE.test(t)) return true;
+  const words = t.split(/\s+/).length;
+  if (words > 40) return false;
+  return t.endsWith('?') || STRONG_QUESTION_START_RE.test(t);
+}
+
+/** Strict check used to skip the AI classifier entirely for obvious chat. */
+function quickChatRoute(text: string): boolean {
+  const t = text.trim();
+  if (!t || hasScanArtifacts(t)) return false;
+  if (GREETING_RE.test(t)) return true;
+  const words = t.split(/\s+/).length;
+  return words <= 30 && STRONG_QUESTION_START_RE.test(t);
+}
+
 export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
   const {
     result: contextResult,
@@ -227,51 +342,46 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
   } = useScanResult();
 
   const [inputType, setInputType] = useState<InputType>('text');
+  // true only when the user explicitly clicked a scan pill (Text / SMS / Email / URL)
+  const [typeChosen, setTypeChosen] = useState(false);
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
-  // Replaces the old raw `error: string | null`. We only ever store a
-  // known ErrorCode — never a provider/server error string — so the UI
-  // can only ever render pre-written, premium copy (see ErrorCard.tsx).
+  const [routing, setRouting] = useState(false); // AI is deciding: scan or chat
   const [errorCode, setErrorCode] = useState<ErrorCode | null>(null);
-  // Shows the ChatGPT-style red top banner when the browser goes offline.
   const [showOfflineBanner, setShowOfflineBanner] = useState(false);
   const [demoText, setDemoText] = useState('');
   const [isTypingDemo, setIsTypingDemo] = useState(false);
   const [shake, setShake] = useState(false);
   const [user, setUser] = useState<any>(null);
-  // Distinct from `user === null` (meaning "not logged in"). Lets the
-  // sidebar show an avatar skeleton instead of nothing while auth resolves.
   const [userLoading, setUserLoading] = useState(true);
 
-  // IMPORTANT: never pick the random headline during the initial render.
-  // Picking it in useState(() => ...) makes the server render one random
-  // headline and the client render a *different* random one on first
-  // paint — a guaranteed hydration mismatch, which forces React to
-  // discard the whole SSR-ed tree and re-render everything from scratch
-  // on the client. That full remount is exactly the "thin heading ->
-  // flashes to something else" glitch. Fix: render the same fixed
-  // headline on both server and first client pass, then swap to a random
-  // one in an effect (client-only, after hydration is already done, so
-  // no mismatch is possible).
-  const [welcomeCopy, setWelcomeCopy] = useState(WELCOME_HEADLINES[0]);
+  // Random greeting — picked ONCE per mount when auth resolves.
+  const [greeting, setGreeting] = useState('');
+  const greetingSetRef = useRef(false);
+
   useEffect(() => {
-    setWelcomeCopy(WELCOME_HEADLINES[Math.floor(Math.random() * WELCOME_HEADLINES.length)]);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (userLoading) return;
+    if (greetingSetRef.current) return;
+    greetingSetRef.current = true;
+
+    const rawName = String(
+      user?.user_metadata?.full_name ?? user?.user_metadata?.name ?? ''
+    ).trim();
+    setGreeting(buildGreeting(rawName));
+  }, [userLoading, user]);
+
+  const greetingReady = !userLoading && greeting.length > 0;
+
+  const [thinkingSteps, setThinkingSteps] = useState<string[]>([]);
 
   const [followUpMessages, setFollowUpMessages] = useState<LiveFollowUpMessage[]>([]);
+  // General chat that happened BEFORE a scan in the same conversation.
+  // Kept on screen (above the scanned content) instead of being wiped.
+  const [preMessages, setPreMessages] = useState<LiveFollowUpMessage[]>([]);
   const [followUpLoading, setFollowUpLoading] = useState(false);
   const [pendingScan, setPendingScan] = useState<{ text: string; type: InputType } | null>(null);
-  // Index of the message currently being streamed (so we can update it)
   const [streamingIndex, setStreamingIndex] = useState<number | null>(null);
 
-  // `historyLoading` below comes from useScanHistory and should only ever
-  // be true on first mount / manual refresh — NOT when the user simply
-  // clicks a different item in the list. Selecting a history item (see
-  // handleSelectHistory) never calls `refreshHistory()`, so the sidebar
-  // itself won't re-enter its skeleton state on every click. If it still
-  // does in your app, check inside useScanHistory.ts for any effect that
-  // re-fires `loading` on selection rather than only on refresh/mount.
   const {
     history: displayHistory,
     loading: historyLoading,
@@ -279,9 +389,10 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     pinToggle: handleHistoryPinToggle,
     rename: handleHistoryRename,
     softDelete: handleHistoryDeleteRaw,
-  } = useScanHistory(8);
+  } = useScanHistory(HISTORY_LIMIT);
 
-  const hasStartedConversation = loading || !!contextResult || !!errorCode;
+  const hasScan = loading || !!contextResult || !!errorCode;
+  const hasStartedConversation = hasScan || followUpMessages.length > 0 || preMessages.length > 0;
   const isFollowUpMode = !!contextResult && !loading;
 
   const [panelOpen, setPanelOpen] = useState(false);
@@ -300,18 +411,27 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
   const [activeScanId, setActiveScanId] = useState<string | null>(null);
 
   const [activeModal, setActiveModal] = useState<AvatarModalType | null>(null);
-
-  // Id of the history item pending a delete confirmation. When set,
-  // <DeleteConfirmModal> is shown; the actual delete only happens on confirm.
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  // Brief loading/skeleton state while switching between history items,
-  // so the chat area doesn't just snap/flicker straight to new content.
   const [switchingHistory, setSwitchingHistory] = useState(false);
   const switchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Timer used when confirming a "new scan" from inside a follow-up thread —
-  // lets the home/hero screen show briefly before the scan actually starts.
   const newScanFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Refs that always hold the latest values (so runScan can read them without
+  // being re-created on every message and without stale-closure bugs).
+  const followUpMessagesRef = useRef<LiveFollowUpMessage[]>([]);
+  const preMessagesRef = useRef<LiveFollowUpMessage[]>([]);
+  const contextResultRef = useRef<typeof contextResult>(null);
+
+  useEffect(() => {
+    followUpMessagesRef.current = followUpMessages;
+  }, [followUpMessages]);
+  useEffect(() => {
+    preMessagesRef.current = preMessages;
+  }, [preMessages]);
+  useEffect(() => {
+    contextResultRef.current = contextResult;
+  }, [contextResult]);
 
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
@@ -320,15 +440,11 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Shows the top red banner the instant the browser reports the network
-  // is gone, and clears it automatically when connectivity returns —
-  // mirrors the ChatGPT-style "You're offline" banner.
   useEffect(() => {
     const handleOffline = () => setShowOfflineBanner(true);
     const handleOnline = () => setShowOfflineBanner(false);
     window.addEventListener('offline', handleOffline);
     window.addEventListener('online', handleOnline);
-    // In case we mount while already offline.
     if (typeof navigator !== 'undefined' && !navigator.onLine) {
       setShowOfflineBanner(true);
     }
@@ -341,9 +457,8 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const typingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
-  // Separate abort controller for the follow-up chat stream, so stopping a
-  // follow-up answer never touches the main scan's in-flight request.
   const followUpAbortRef = useRef<AbortController | null>(null);
+  const thinkingAbortRef = useRef<AbortController | null>(null);
   const typeIndexRef = useRef(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -351,17 +466,11 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
   const resultRef = useRef<HTMLDivElement>(null);
   const hasAutoScrolledRef = useRef(false);
 
-  // ─── Streaming batching refs ───────────────────────────────────────────
-  // Streamed text is buffered here and flushed to React state at most once
-  // per animation frame, so fast token streams don't cause jerky re-renders.
   const pendingContentRef = useRef<string>('');
   const rafHandleRef = useRef<number | null>(null);
   const assistantIndexRef = useRef<number>(-1);
-  // Tracks suggestion chips for the in-flight assistant turn (redirect case)
-  // so they can be persisted to Supabase once streaming finishes.
   const pendingSuggestionsRef = useRef<string[] | undefined>(undefined);
 
-  // Grow textarea
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -369,7 +478,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     el.style.height = Math.min(el.scrollHeight, 200) + 'px';
   }, [message, panelOpen]);
 
-  // Fetch user
   useEffect(() => {
     const getUser = async () => {
       try {
@@ -387,14 +495,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     return () => subscription?.subscription.unsubscribe();
   }, []);
 
-  // NOTE — the old effect that called `refreshHistory()` on every
-  // `contextResult` change has been removed. It fired on history switches
-  // too (not just fresh scans), which re-triggered the sidebar's loading
-  // state and caused the white skeleton flash. `runScan` already calls
-  // `refreshHistory()` itself right after a new scan is saved, so nothing
-  // is lost — the sidebar simply no longer refreshes on unrelated renders.
-
-  // Scroll to progress when loading starts
   useEffect(() => {
     if (loading && !hasAutoScrolledRef.current) {
       hasAutoScrolledRef.current = true;
@@ -407,12 +507,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     }
   }, [loading]);
 
-  // When the report finishes generating, bring its TOP into view instead of
-  // jumping straight to the bottom of the page. The report's findings/summary
-  // reveal with a staggered fade-in animation, so snapping to the very end
-  // immediately would skip past that animation and feel jarring. Scrolling
-  // to the start of the report lets the user read it in from the top, the
-  // same way the "scanning progress" view is brought into place above.
   useEffect(() => {
     if (!loading && contextResult) {
       requestAnimationFrame(() => {
@@ -421,8 +515,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     }
   }, [loading, contextResult]);
 
-  // Auto-scroll for follow-up thread — only when a new message is appended
-  // (not on every streamed chunk, which is handled separately + conditionally below)
   useEffect(() => {
     if (followUpMessages.length === 0) return;
     requestAnimationFrame(() => {
@@ -430,7 +522,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     });
   }, [followUpMessages.length, followUpLoading]);
 
-  // Clear any pending timeouts on unmount.
   useEffect(() => {
     return () => {
       if (switchTimeoutRef.current) clearTimeout(switchTimeoutRef.current);
@@ -438,33 +529,11 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     };
   }, []);
 
-  // Returns true if the user is already scrolled near the bottom of the
-  // conversation — used to decide whether streamed content should auto-scroll.
   const isNearBottom = useCallback(() => {
     const el = scrollContainerRef.current;
     if (!el) return true;
     return el.scrollHeight - el.scrollTop - el.clientHeight < AUTO_SCROLL_THRESHOLD_PX;
   }, []);
-
-  const getLabel = useCallback(() => {
-    switch (inputType) {
-      case 'sms': return 'SMS Content';
-      case 'email': return 'Email Payload';
-      case 'url': return 'Target URL';
-      default: return 'Text Document';
-    }
-  }, [inputType]);
-
-  const getShortLabel = useCallback(() => {
-    switch (inputType) {
-      case 'sms': return 'SMS';
-      case 'email': return 'Email';
-      case 'url': return 'URL';
-      default: return 'Text';
-    }
-  }, [inputType]);
-
-  const ActiveIcon = QUICK_ACTIONS.find((a) => a.id === inputType)?.icon ?? QUICK_ACTIONS[0].icon;
 
   const stopGhostScene = useCallback(() => {
     setIsTypingDemo(false);
@@ -497,15 +566,30 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     }, 15);
   }, []);
 
+  // ── Reset the scan pill (back to auto-detect) ────────────────────────────
+  const handleResetType = useCallback(() => {
+    stopGhostScene();
+    setTypeChosen(false);
+    setInputType('text');
+    setErrorCode(null);
+    textareaRef.current?.focus();
+  }, [stopGhostScene]);
+
   const handleActionClick = useCallback(
     (type: InputType) => {
+      // clicking the already-selected pill again = reset
+      if (typeChosen && inputType === type) {
+        handleResetType();
+        return;
+      }
       setInputType(type);
+      setTypeChosen(true);
       setErrorCode(null);
       setMessage('');
       runGhostTypewriter(SAMPLE_SENTENCES[type]);
       textareaRef.current?.focus();
     },
-    [runGhostTypewriter]
+    [typeChosen, inputType, handleResetType, runGhostTypewriter]
   );
 
   useEffect(() => {
@@ -513,11 +597,80 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
       if (typingIntervalRef.current) clearInterval(typingIntervalRef.current);
       abortControllerRef.current?.abort();
       followUpAbortRef.current?.abort();
+      thinkingAbortRef.current?.abort();
       if (rafHandleRef.current !== null) cancelAnimationFrame(rafHandleRef.current);
     };
   }, []);
 
   const hasContent = message.trim().length > 0;
+
+  const streamThinking = useCallback(
+    async (content: string, type: InputType, signal: AbortSignal) => {
+      try {
+        const res = await fetch('/api/scan-thinking', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content, type }),
+          signal,
+        });
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let acc = '';
+        const toSteps = (text: string, final: boolean) => {
+          const lines = text.split('\n');
+          const complete = final ? lines : lines.slice(0, -1);
+          return complete
+            .map((l) => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, '').replace(/[.…]+$/, '').trim())
+            .filter((l) => l.length > 0 && l.length <= 60)
+            .slice(0, 7);
+        };
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          acc += decoder.decode(value, { stream: true });
+          setThinkingSteps(toSteps(acc, false));
+        }
+        setThinkingSteps(toSteps(acc, true));
+      } catch {
+        /* best-effort */
+      }
+    },
+    []
+  );
+
+  // ── AI input router: scan content vs. chat question ──────────────────────
+  const classifyInput = useCallback(
+    async (text: string): Promise<{ route: 'scan' | 'chat'; scanType: InputType }> => {
+      try {
+        const res = await fetch('/api/classify-input', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+          signal: AbortSignal.timeout(9000),
+        });
+        if (!res.ok) throw new Error('classify failed');
+        const data = await res.json();
+        return {
+          route: data.route === 'scan' ? 'scan' : 'chat',
+          scanType: (VALID_TYPES.includes(data.scanType) ? data.scanType : 'text') as InputType,
+        };
+      } catch {
+        // Classifier down → decide locally:
+        //  - greeting / question → chat
+        //  - inside a scan chat and no link/headers/number → chat
+        //  - otherwise → scan
+        const question = looksLikeQuestion(text);
+        const route: 'scan' | 'chat' = question
+          ? 'chat'
+          : isFollowUpMode && !hasScanArtifacts(text)
+          ? 'chat'
+          : 'scan';
+        return { route, scanType: typeChosen ? inputType : 'text' };
+      }
+    },
+    [isFollowUpMode, inputType, typeChosen]
+  );
 
   const runScan = useCallback(async (rawContent: string, type: InputType) => {
     const finalContent = rawContent.trim();
@@ -531,21 +684,43 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     stopGhostScene();
     setPanelOpen(false);
     setPanelFullScreen(false);
-    setCustomTitle(null);
+
+    // ── Keep the earlier general chat ──────────────────────────────────────
+    // If the user was just chatting (no scan result yet), move those messages
+    // above the new scan instead of wiping them.
+    followUpAbortRef.current?.abort();
+    if (rafHandleRef.current !== null) {
+      cancelAnimationFrame(rafHandleRef.current);
+      rafHandleRef.current = null;
+    }
+    let preForSave: LiveFollowUpMessage[] = preMessagesRef.current;
+    if (!contextResultRef.current && followUpMessagesRef.current.length > 0) {
+      const carried = followUpMessagesRef.current
+        .map((m, idx, arr) =>
+          m.streaming && idx === arr.length - 1 && m.role === 'assistant'
+            ? { ...m, content: pendingContentRef.current || m.content, streaming: false }
+            : { ...m, streaming: false }
+        )
+        .filter((m) => m.role === 'user' || m.content.trim().length > 0);
+      preForSave = [...preMessagesRef.current, ...carried];
+      preMessagesRef.current = preForSave;
+      setPreMessages(preForSave);
+    }
+
+    // Show a derived title in the header right away; the AI title replaces it.
+    setCustomTitle(deriveFallbackTitle(finalContent, type));
     setPinned(false);
     setActiveScanId(null);
     setFollowUpMessages([]);
     setFollowUpLoading(false);
     setPendingScan(null);
     setStreamingIndex(null);
+    setTypeChosen(false);
 
     abortControllerRef.current?.abort();
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    // Belt-and-braces client-side timeout in addition to the server's own
-    // AbortSignal.timeout — guarantees the UI never hangs indefinitely
-    // even if the network layer itself stalls before reaching our server.
     const timeoutId = setTimeout(() => controller.abort('timeout'), REQUEST_TIMEOUT_MS);
 
     setLoading(true);
@@ -555,7 +730,12 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     setContextInputType(type);
     setMessage('');
 
-    const minDuration = (CHECKLIST_STEPS[type]?.length ?? 6) * 450 + 1200;
+    thinkingAbortRef.current?.abort();
+    const thinkingController = new AbortController();
+    thinkingAbortRef.current = thinkingController;
+    setThinkingSteps([]);
+    void streamThinking(finalContent, type, thinkingController.signal);
+
     const startedAt = Date.now();
 
     try {
@@ -572,8 +752,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
       });
 
       if (!res.ok) {
-        // Server only ever sends a `code` — never a raw provider message —
-        // so we can only ever render pre-written, premium copy.
         const errData = await res.json().catch(() => ({}));
         setErrorCode(extractErrorCode(errData));
         return;
@@ -584,19 +762,14 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
       const scanResult: ScamResultWithFindings = { ...data, scanId };
 
       const elapsed = Date.now() - startedAt;
-      if (elapsed < minDuration) {
-        await new Promise((resolve) => setTimeout(resolve, minDuration - elapsed));
+      if (elapsed < MIN_SCAN_DURATION_MS) {
+        await new Promise((resolve) => setTimeout(resolve, MIN_SCAN_DURATION_MS - elapsed));
       }
       if (controller.signal.aborted) return;
 
       setContextResult(scanResult);
 
-      // Ask for a short, professional, AI-generated title for this scan
-      // (e.g. "HBL Account Verification Scam") instead of always falling
-      // back to a generic label. Best-effort: if it fails or times out we
-      // fall back to `deriveFallbackTitle`, which still produces a
-      // content-specific title (domain name, subject line, or message
-      // preview) rather than a plain "Text/Email/SMS/URL Scan Analysis".
+      // ── AI title for header + sidebar (best-effort, falls back) ──
       let aiTitle: string | null = null;
       try {
         const titleRes = await fetch('/api/generate-title', {
@@ -607,7 +780,7 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
         });
         if (titleRes.ok) {
           const titleData = (await titleRes.json()) as { title?: string | null };
-          aiTitle = titleData.title ?? null;
+          aiTitle = titleData.title?.trim() || null;
         }
       } catch (titleErr) {
         console.error('Title generation failed:', titleErr);
@@ -628,15 +801,12 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
             .insert({
               user_id: user.id,
               type: typeMap[type] ?? 'Text',
-              // Specific, content-aware title (AI-generated, or a
-              // deterministic fallback) so the sidebar/header never shows
-              // a generic, unrelated label.
               title: resolvedTitle,
               content: finalContent,
               risk_level: scanResult.riskLevel === 'high' ? 'High' : scanResult.riskLevel === 'medium' ? 'Medium' : 'Low',
               risk_score: scanResult.riskScore,
               is_scam: scanResult.riskLevel !== 'low',
-              details: buildScanDetails(scanResult, []),
+              details: buildScanDetails(scanResult, [], type, preForSave),
             })
             .select('id')
             .single();
@@ -645,9 +815,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
           refreshHistory();
         }
       } catch (dbError) {
-        // Saving history is best-effort — the report itself already
-        // rendered successfully, so we log this quietly rather than
-        // surfacing an error card over a working result.
         console.error('Failed to save scan:', dbError);
       }
 
@@ -662,9 +829,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
       });
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') {
-        // Distinguish our own client-side timeout abort from a genuine
-        // user-initiated cancel (there's no cancel button on the initial
-        // scan today, so in practice this branch is our timeout).
         setErrorCode('timeout');
         return;
       }
@@ -676,23 +840,22 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
       setErrorCode('unknown');
     } finally {
       clearTimeout(timeoutId);
+      thinkingController.abort();
       if (abortControllerRef.current === controller) {
         setLoading(false);
+        setThinkingSteps([]);
       }
     }
-  }, [stopGhostScene, setContextResult, setContextInputContent, setContextInputType, onScan, refreshHistory]);
+  }, [stopGhostScene, setContextResult, setContextInputContent, setContextInputType, onScan, refreshHistory, streamThinking]);
 
-  // ─── Follow‑up with streaming ─────────────────────────────────────────
   const handleFollowUpSend = useCallback(async (question: string) => {
     const trimmed = question.trim();
-    if (!trimmed || !contextResult) return;
+    if (!trimmed) return;
 
-    // Add user message
     const userTurn: FollowUpMessage = { role: 'user', content: trimmed };
     setFollowUpMessages((prev) => [...prev, userTurn]);
 
-    // Create placeholder assistant message
-    const assistantIndex = followUpMessages.length + 1; // after user and previous messages
+    const assistantIndex = followUpMessages.length + 1;
     assistantIndexRef.current = assistantIndex;
     pendingContentRef.current = '';
     pendingSuggestionsRef.current = undefined;
@@ -706,18 +869,13 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     setStreamingIndex(assistantIndex);
     setFollowUpLoading(true);
 
-    // Abort controller for THIS follow-up turn — lets the stop button
-    // cancel just the in-flight answer without touching a fresh scan.
     followUpAbortRef.current?.abort();
     const controller = new AbortController();
     followUpAbortRef.current = controller;
     const timeoutId = setTimeout(() => controller.abort('timeout'), REQUEST_TIMEOUT_MS);
 
-    // Persists the completed follow-up turn (user question + assistant
-    // answer) into the scan row's `details.followUps`, so refreshing the
-    // page or switching to another history item and back doesn't lose it.
     const persistFollowUp = (assistantContent: string, suggestions?: string[]) => {
-      if (!activeScanId) return; // guest / not-yet-saved scan — nothing to persist to
+      if (!activeScanId) return;
       const finalThread: FollowUpMessage[] = [
         ...followUpMessages,
         userTurn,
@@ -725,15 +883,20 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
       ];
       supabase
         .from('scans')
-        .update({ details: buildScanDetails(contextResult, finalThread) })
+        .update({
+          details: buildScanDetails(
+            contextResult as ScamResultWithFindings | null,
+            finalThread,
+            contextInputType as InputType,
+            preMessagesRef.current
+          ),
+        })
         .eq('id', activeScanId)
         .then(({ error }) => {
           if (error) console.error('Failed to save follow-up:', error);
         });
     };
 
-    // Sets a graceful, on-brand fallback message on the assistant bubble
-    // in place of a raw error — used for stream failures / timeouts.
     const setBubbleFallback = (text: string) => {
       if (rafHandleRef.current !== null) {
         cancelAnimationFrame(rafHandleRef.current);
@@ -746,8 +909,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
       );
     };
 
-    // Flushes the buffered streamed text into React state — throttled to
-    // at most once per animation frame for smooth, non-jerky rendering.
     const flushPending = () => {
       const idx = assistantIndexRef.current;
       setFollowUpMessages((prev) =>
@@ -776,18 +937,20 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           question: trimmed,
-          history: followUpMessages,
-          context: {
-            inputContent: contextInputContent,
-            inputType: contextInputType,
-            result: contextResult,
-          },
+          // earlier general chat + this scan's follow-ups, so the AI keeps the full context
+          history: [...preMessagesRef.current, ...followUpMessages],
+          context: contextResult
+            ? {
+                inputContent: contextInputContent,
+                inputType: contextInputType,
+                result: contextResult,
+              }
+            : null,
         }),
         signal: controller.signal,
       });
 
       if (!res.ok) {
-        // Same code-only contract as the main scan endpoint.
         await res.json().catch(() => ({}));
         setBubbleFallback("I couldn't process that just now. Please try asking again in a moment.");
         return;
@@ -824,10 +987,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
               pendingContentRef.current = accumulated;
               scheduleFlush();
             } else if (data.type === 'redirect') {
-              // First redirect event carries the initial redirect message text.
-              // If the backend provided its own contextual suggestions
-              // (data.suggestions), use those; otherwise fall back to the
-              // generic REDIRECT_SUGGESTIONS list.
               accumulated = data.content;
               pendingContentRef.current = accumulated;
               pendingSuggestionsRef.current =
@@ -846,14 +1005,19 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
                 )
               );
             } else if (data.type === 'redirect_append') {
-              // Model kept streaming more of the redirect message after the marker.
               accumulated += data.content;
               pendingContentRef.current = accumulated;
               scheduleFlush();
+            } else if (data.type === 'suggestions') {
+              if (Array.isArray(data.suggestions) && data.suggestions.length > 0) {
+                pendingSuggestionsRef.current = data.suggestions;
+                setFollowUpMessages((prev) =>
+                  prev.map((msg, idx) =>
+                    idx === assistantIndex ? { ...msg, suggestions: data.suggestions } : msg
+                  )
+                );
+              }
             } else if (data.type === 'stream_error') {
-              // Upstream connection dropped mid-stream — keep whatever
-              // partial text streamed in, but stop cleanly instead of
-              // leaving the bubble stuck on "streaming" forever.
               if (rafHandleRef.current !== null) {
                 cancelAnimationFrame(rafHandleRef.current);
                 rafHandleRef.current = null;
@@ -874,7 +1038,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
               );
               setStreamingIndex(null);
             } else if (data.type === 'done') {
-              // Finalize — flush anything pending immediately, then clear streaming flag.
               if (rafHandleRef.current !== null) {
                 cancelAnimationFrame(rafHandleRef.current);
                 rafHandleRef.current = null;
@@ -886,7 +1049,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
                 )
               );
               setStreamingIndex(null);
-              // Save the completed turn once streaming is fully done.
               persistFollowUp(finalContent, pendingSuggestionsRef.current);
             }
           } catch (e) {
@@ -895,8 +1057,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
         }
       }
     } catch (err) {
-      // User pressed the stop button — the partial answer already shown
-      // (via flushPending) is kept as-is; no error bubble, no overwrite.
       if (err instanceof DOMException && err.name === 'AbortError') {
         if (controller.signal.reason === 'timeout') {
           setBubbleFallback("That took longer than expected. Please try asking again.");
@@ -915,9 +1075,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     }
   }, [contextResult, contextInputContent, contextInputType, followUpMessages, isNearBottom, activeScanId]);
 
-  // Stops an in-flight follow-up stream (called from the send button when
-  // it's showing the "stop" square) — cancels the fetch, freezes whatever
-  // text has streamed in so far, and clears the loading/streaming flags.
   const handleStopFollowUp = useCallback(() => {
     followUpAbortRef.current?.abort();
     if (rafHandleRef.current !== null) {
@@ -938,12 +1095,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     void handleFollowUpSend(text);
   }, [handleFollowUpSend]);
 
-  // ─── New-scan confirmation from inside a follow-up thread ─────────────
-  // Cancel: nothing is sent, nothing is discarded from the scan/report —
-  //   the composer is simply left empty (see handleCancelPendingScan).
-  // Confirm: fully resets back to the home/hero screen first (so the user
-  //   visibly sees the welcome screen + quick actions), then a moment
-  //   later kicks off the new scan with the text they typed.
   const handleConfirmPendingScan = useCallback(() => {
     if (!pendingScan) return;
     const { text, type } = pendingScan;
@@ -951,7 +1102,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
 
     if (newScanFlashTimeoutRef.current) clearTimeout(newScanFlashTimeoutRef.current);
 
-    // Full reset -> hero headline + quick action buttons become visible.
     setContextResult(null);
     setContextInputContent('');
     setPanelOpen(false);
@@ -959,34 +1109,33 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     stopGhostScene();
     setErrorCode(null);
     setLoading(false);
+    setThinkingSteps([]);
     setCustomTitle(null);
     setPinned(false);
     setActiveScanId(null);
     setFollowUpMessages([]);
+    setPreMessages([]);
     setFollowUpLoading(false);
     setStreamingIndex(null);
     setInputType(type);
+    setTypeChosen(false);
     setMessage('');
 
-    // Give the home screen a brief moment on screen before the new scan
-    // takes over and the chat/progress view replaces it.
     newScanFlashTimeoutRef.current = setTimeout(() => {
       void runScan(text, type);
     }, NEW_SCAN_HOME_FLASH_MS);
   }, [pendingScan, runScan, stopGhostScene, setContextResult, setContextInputContent]);
 
   const handleCancelPendingScan = useCallback(() => {
-    // Just dismiss the modal — the typed content was already cleared from
-    // the composer when the modal was raised (see handleScan below), and
-    // nothing has been sent or discarded from the active report/thread.
     setPendingScan(null);
   }, []);
 
-  // True while a follow-up answer is actively streaming — drives the send
-  // button switching from an up-arrow into a stop square.
-  const isFollowUpBusy = followUpLoading && isFollowUpMode;
+  const isFollowUpBusy = followUpLoading;
 
-  const handleScan = useCallback(() => {
+  // ── Single entry point for the input box (home + chat) ───────────────────
+  const handleScan = useCallback(async () => {
+    if (routing) return;
+
     const trimmed = message.trim();
     if (!trimmed) {
       setShake(true);
@@ -995,24 +1144,60 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
       return;
     }
 
-    if (isFollowUpMode) {
-      if (isSameContent(trimmed, contextInputContent)) {
-        setMessage('');
-        void runScan(trimmed, (contextInputType as InputType) ?? inputType);
-        return;
-      }
-      if (looksLikeNewScanContent(trimmed)) {
-        setMessage('');
-        setPendingScan({ text: trimmed, type: detectInputType(trimmed) });
-        return;
-      }
+    // Same content again → rescan directly, no AI routing needed
+    if (isFollowUpMode && isSameContent(trimmed, contextInputContent)) {
       setMessage('');
+      void runScan(trimmed, (contextInputType as InputType) ?? inputType);
+      return;
+    }
+
+    let route: 'scan' | 'chat';
+    let classifiedType: InputType;
+
+    if (!typeChosen && quickChatRoute(trimmed)) {
+      // Obvious greeting / general or cybersecurity question → straight to chat,
+      // no scan and no waiting for the classifier.
+      route = 'chat';
+      classifiedType = 'text';
+    } else {
+      setRouting(true);
+      const r = await classifyInput(trimmed);
+      setRouting(false);
+      route = r.route;
+      classifiedType = r.scanType;
+    }
+
+    const scanType = refineScanType(trimmed, classifiedType, typeChosen ? inputType : 'text');
+
+    if (route === 'chat') {
+      setMessage('');
+      stopGhostScene();
       void handleFollowUpSend(trimmed);
       return;
     }
 
-    void runScan(trimmed, inputType);
-  }, [message, isFollowUpMode, contextInputContent, contextInputType, inputType, runScan, handleFollowUpSend]);
+    // route === 'scan'
+    setMessage('');
+    if (isFollowUpMode) {
+      // a scan is already open → confirm before starting a new one
+      setPendingScan({ text: trimmed, type: scanType });
+      return;
+    }
+    setInputType(scanType);
+    void runScan(trimmed, scanType);
+  }, [
+    routing,
+    message,
+    isFollowUpMode,
+    contextInputContent,
+    contextInputType,
+    inputType,
+    typeChosen,
+    classifyInput,
+    runScan,
+    handleFollowUpSend,
+    stopGhostScene,
+  ]);
 
   const handleRetry = useCallback(
     () => runScan(contextInputContent, (contextInputType as InputType) ?? 'text'),
@@ -1038,13 +1223,20 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     stopGhostScene();
     setErrorCode(null);
     setLoading(false);
+    setRouting(false);
+    setThinkingSteps([]);
+    thinkingAbortRef.current?.abort();
+    followUpAbortRef.current?.abort();
     setCustomTitle(null);
     setPinned(false);
     setActiveScanId(null);
     setFollowUpMessages([]);
+    setPreMessages([]);
     setFollowUpLoading(false);
     setPendingScan(null);
     setStreamingIndex(null);
+    setTypeChosen(false);
+    setInputType('text');
     textareaRef.current?.focus();
   }, [setContextResult, setContextInputContent, stopGhostScene]);
 
@@ -1062,7 +1254,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     textareaRef.current?.focus();
   }, [contextInputContent]);
 
-  // Edit a follow-up question: load it back into the composer for editing/resending.
   const handleEditFollowUp = useCallback((content: string) => {
     setMessage(content);
     textareaRef.current?.focus();
@@ -1074,15 +1265,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     window.location.href = '/';
   };
 
-  // Wrapped with a `switchingHistory` flag, held for a fixed minimum
-  // duration (HISTORY_SWITCH_SKELETON_MS) so the skeleton is actually
-  // visible for a beat instead of flashing on/off within the same frame.
-  // Also restores the persisted follow-up thread (details.followUps)
-  // instead of always clearing it to [].
-  //
-  // Deliberately does NOT call refreshHistory() or touch anything that
-  // would flip the sidebar's own `historyLoading` — selecting an item you
-  // can already see in the list should never make the list itself reload.
   const handleSelectHistory = useCallback((id: string) => {
     const entry = displayHistory.find((h) => h.id === id);
     if (!entry) return;
@@ -1092,7 +1274,10 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
 
     const row = entry.raw;
     const details = row.details ?? {};
-    const resolvedType = (row.type ?? 'Text').toString().toLowerCase() as InputType;
+    const savedType = String(details.scanType ?? '').toLowerCase();
+    const resolvedType = (
+      VALID_TYPES.includes(savedType as InputType) ? savedType : (row.type ?? 'Text').toString().toLowerCase()
+    ) as InputType;
     const resolvedContent = row.content ?? '';
 
     setContextInputContent(resolvedContent);
@@ -1104,25 +1289,32 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
       safetyTips: details.safetyTips ?? [],
       findings: details.findings ?? [],
       recommendation: details.recommendation ?? undefined,
+      attemptLabel: details.attemptLabel ?? undefined,
+      threatType: details.threatType ?? undefined,
+      indicators: details.indicators ?? [],
+      metaRows: details.metaRows ?? [],
+      targetBrand: details.targetBrand ?? undefined,
+      status: details.status ?? undefined,
+      cvss: details.cvss ?? undefined,
+      reportTitle: details.reportTitle ?? undefined,
       scanId: details.scanId ?? row.id,
     } as any);
     setErrorCode(null);
     setPanelOpen(false);
     setPanelFullScreen(false);
-    // Specific title: saved title first, then a content-aware fallback —
-    // never the plain generic "Text/Email/SMS/URL Scan Analysis" label.
     setCustomTitle(row.title ?? deriveFallbackTitle(resolvedContent, resolvedType));
     setPinned(!!row.pinned);
     setActiveScanId(row.id);
-    // Restore the saved follow-up thread instead of wiping it. Persisted
-    // records never carry `streaming`, so we explicitly reset it to false
-    // on restore — the extended local type makes the mapped result valid.
+    setPreMessages(
+      ((details.preMessages ?? []) as LiveFollowUpMessage[]).map((f) => ({ ...f, streaming: false }))
+    );
     setFollowUpMessages(
       ((details.followUps ?? []) as LiveFollowUpMessage[]).map((f) => ({ ...f, streaming: false }))
     );
     setFollowUpLoading(false);
     setPendingScan(null);
     setStreamingIndex(null);
+    setTypeChosen(false);
 
     switchTimeoutRef.current = setTimeout(() => {
       setSwitchingHistory(false);
@@ -1173,6 +1365,8 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     if (!sidebarCollapsed) setSidebarManuallyCollapsed(true);
   }, [sidebarCollapsed]);
 
+  // Kept for compatibility with the ReportPanel `onDownload` prop.
+  // (The updated ReportPanel generates the A4 PDF by itself.)
   const handleDownloadReport = useCallback(async () => {
     if (!contextResult || !contextInputContent) return;
     try {
@@ -1188,9 +1382,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
         data.campaignStatus || 'Under Review',
         data.threatTypeLabel || 'Unclassified',
         data.targetBrand || 'Unknown',
-        // Final arg is `GeneratePdfReportOptions` (not a boolean flag).
-        // Passing an empty object uses the function's defaults — same
-        // behaviour as ReportViewerModal's download.
         {}
       );
     } catch (err) {
@@ -1198,10 +1389,11 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     }
   }, [contextResult, contextInputContent, contextInputType]);
 
-  // Specific, content-aware header/history label — falls back through:
-  // AI-generated custom title -> content-derived title -> generic label.
   const topHeaderLabel =
-    customTitle ?? deriveFallbackTitle(contextInputContent, (contextInputType as InputType) ?? 'text');
+    customTitle ??
+    (contextResult
+      ? deriveFallbackTitle(contextInputContent, (contextInputType as InputType) ?? 'text')
+      : 'New chat');
 
   const handleRenameStart = useCallback(() => {
     setRenameValue(topHeaderLabel);
@@ -1241,19 +1433,14 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     }
   }, [contextResult, topHeaderLabel]);
 
-  // Instead of deleting immediately, open the confirmation modal. The
-  // actual delete happens in the modal's onConfirm below.
   const handleHeaderDelete = useCallback(() => {
     if (activeScanId) {
       setConfirmDeleteId(activeScanId);
     } else {
-      // Nothing persisted yet (guest / unsaved) — nothing to confirm, just reset.
       handleNewScan();
     }
   }, [activeScanId, handleNewScan]);
 
-  // Sidebar's per-item kebab "Delete" also routes through the same
-  // confirmation modal rather than deleting on click.
   const handleRequestHistoryDelete = useCallback((id: string) => {
     setConfirmDeleteId(id);
   }, []);
@@ -1267,127 +1454,242 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     setConfirmDeleteId(null);
   }, [confirmDeleteId, activeScanId, handleHistoryDeleteRaw, handleNewScan]);
 
-  // ──────────────────────────── Input Box ──────────────────────────────
+  // ── Input box ──────────────────────────────────────────────────────────
   const renderInputBox = (variant: 'home' | 'chat') => {
     const isHome = variant === 'home';
-    const rounding = isHome ? 'rounded-[26px]' : 'rounded-2xl';
-    const padTop = isHome ? 'pt-5' : panelOpen ? 'pt-2' : 'pt-2.5';
-    const padBottom = isHome ? 'pb-1' : panelOpen ? 'pb-0.5' : 'pb-1';
-    const minHeight = isHome ? 72 : (panelOpen ? 32 : 60);
-    const textSize = isHome ? 'text-[15.5px] sm:text-[16px]' : 'text-[14.5px] sm:text-[15.5px]';
-    // Chat-variant horizontal padding trimmed slightly on the right so the
-    // composer doesn't create extra visual "resistance" right next to the
-    // scrollbar thumb above it.
-    const horizontalPad = isHome ? 'px-5 sm:px-6' : 'px-3 sm:px-3.5';
-    const placeholderText = isHome ? INPUT_PLACEHOLDER : isFollowUpMode ? FOLLOWUP_PLACEHOLDER : INPUT_PLACEHOLDER;
+    const placeholderText = isFollowUpMode
+      ? FOLLOWUP_PLACEHOLDER
+      : isHome
+      ? TYPE_PLACEHOLDER[typeChosen ? inputType : 'text']
+      : INPUT_PLACEHOLDER;
     const typedTypography = getMessageTypography(message);
-
-    // Only show the "stop" square in the chat composer — the home
-    // composer can never have a follow-up in flight.
     const showStop = !isHome && isFollowUpBusy;
+    // Scan pills are available until a scan result exists (home, general chat, errors)
+    const canPickType = isHome || !isFollowUpMode;
+    const compact = !isHome && !canPickType;
+    const padClass = compact ? 'px-4 py-3' : 'px-4 pt-4 pb-1';
+    const busy = loading || routing;
+
+    const textareaNode = (
+      <div className="relative w-full min-w-0 flex-1">
+        <textarea
+          ref={textareaRef}
+          value={message}
+          dir={typedTypography.dir}
+          onChange={(e) => {
+            stopGhostScene();
+            setMessage(e.target.value);
+          }}
+          onPaste={(e) => {
+            e.preventDefault();
+            stopGhostScene();
+            setMessage(e.clipboardData.getData('text'));
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder={isTypingDemo ? '' : placeholderText}
+          rows={1}
+          disabled={busy}
+          // 17px on phones (>=16px so iOS never zooms), 18px on desktop
+          className={`w-full bg-transparent ${padClass} border-none outline-none resize-none text-stone-900 placeholder:text-stone-500 text-[17px] sm:text-[18px] placeholder:text-[16px] sm:placeholder:text-[18px] leading-[1.55] relative z-10 ${
+            busy ? 'opacity-60 cursor-not-allowed' : ''
+          }`}
+          style={{
+            fontFamily: typedTypography.fontFamily,
+            minHeight: compact ? 30 : isHome ? 60 : 52,
+            maxHeight: 200,
+            overflowY: 'auto',
+          }}
+        />
+        {isTypingDemo && !message && !busy && (
+          <div
+            className={`absolute inset-0 pointer-events-none ${padClass} text-[17px] sm:text-[18px] leading-[1.55] text-stone-400/80 z-0 select-none whitespace-pre-wrap`}
+            style={{ fontFamily: FONT_BODY }}
+          >
+            {demoText}
+            <span className="animate-pulse font-semibold text-stone-500 ml-0.5">|</span>
+          </div>
+        )}
+      </div>
+    );
+
+    const sendButton = (
+      <button
+        onClick={() => (showStop ? handleStopFollowUp() : void handleScan())}
+        disabled={busy || (!hasContent && !showStop)}
+        title={routing ? 'Checking…' : loading ? 'Scanning…' : showStop ? 'Stop' : isFollowUpMode ? 'Send' : 'Scan'}
+        className={`w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-200 ${
+          busy || showStop
+            ? 'bg-blue-600 cursor-pointer shadow-sm'
+            : hasContent
+            ? 'bg-blue-600 hover:bg-blue-700 cursor-pointer shadow-sm'
+            : 'bg-stone-200 cursor-not-allowed'
+        }`}
+      >
+        {busy ? (
+          <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+        ) : showStop ? (
+          <Square className="w-3 h-3 text-white" fill="currentColor" strokeWidth={0} />
+        ) : (
+          <ArrowUp className={`w-4 h-4 ${hasContent ? 'text-white' : 'text-stone-400'}`} />
+        )}
+      </button>
+    );
 
     return (
       <div
-        className={`${shake ? 'scyra-shake' : ''} bg-white ${rounding} border shadow-sm overflow-hidden relative flex flex-col transition-all duration-200 ${
-          shake ? 'border-red-300' : isHome ? 'border-black/10 focus-within:border-black/20' : 'border-black/10 focus-within:border-black/20'
+        className={`${shake ? 'scyra-shake' : ''} bg-white ${
+          isHome ? 'rounded-[22px]' : 'rounded-[20px]'
+        } border shadow-[0_2px_8px_rgba(0,0,0,0.04)] focus-within:shadow-[0_4px_16px_rgba(0,0,0,0.08)] relative transition-shadow duration-200 ${
+          shake ? 'border-red-300' : 'border-black/10 focus-within:border-black/20'
         }`}
       >
-        <div className="relative w-full">
-          <textarea
-            ref={textareaRef}
-            value={message}
-            dir={typedTypography.dir}
-            onChange={(e) => {
-              stopGhostScene();
-              setMessage(e.target.value);
-            }}
-            onPaste={(e) => {
-              e.preventDefault();
-              stopGhostScene();
-              setMessage(e.clipboardData.getData('text'));
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder={isTypingDemo ? '' : placeholderText}
-            rows={1}
-            disabled={loading}
-            className={`w-full bg-transparent ${horizontalPad} ${padTop} ${padBottom} border-none outline-none resize-none text-stone-800 placeholder:text-stone-400 ${textSize} leading-relaxed relative z-10 ${
-              loading ? 'opacity-60 cursor-not-allowed' : ''
-            }`}
-            style={{ fontFamily: typedTypography.fontFamily, minHeight, maxHeight: 200, overflowY: 'auto' }}
-          />
-          {isTypingDemo && !message && !loading && (
-            <div
-              className={`absolute inset-0 pointer-events-none ${horizontalPad} ${padTop} ${padBottom} ${isHome ? 'text-[13.5px] sm:text-[16px]' : 'text-[12.5px] sm:text-[15.5px]'} leading-relaxed text-stone-400/80 z-0 select-none whitespace-pre-wrap`}
-              style={{ fontFamily: FONT_BODY }}
-            >
-              {demoText}
-              <span className="animate-pulse font-semibold text-[#C65B39] ml-0.5">|</span>
-            </div>
-          )}
-        </div>
-
-        <div className={`flex items-center justify-between ${isHome ? 'px-3.5 sm:px-4 pb-3 sm:pb-3.5 pt-1.5' : 'px-2 sm:px-3 pb-2 sm:pb-3 pt-1'}`}>
-          <div className="flex items-center gap-1.5 px-1.5 sm:px-2 py-1 rounded-md text-[10.5px] sm:text-[11px] font-bold uppercase tracking-wide text-stone-500 select-none">
-            <ActiveIcon className="w-3 h-3 text-stone-400" />
-            <span className="hidden sm:inline">{getLabel()}</span>
-            <span className="sm:hidden">{getShortLabel()}</span>
+        {compact ? (
+          <div className="flex items-end gap-2 pr-2.5">
+            {textareaNode}
+            <div className="mb-2">{sendButton}</div>
           </div>
-          <button
-            onClick={() => (showStop ? handleStopFollowUp() : void handleScan())}
-            disabled={loading || (!hasContent && !showStop)}
-            title={loading ? 'Scanning…' : showStop ? 'Stop' : isFollowUpMode ? 'Send' : 'Scan'}
-            className={`w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center transition-all duration-200 ${
-              loading || showStop
-                ? 'bg-blue-600 cursor-pointer shadow-sm'
-                : hasContent
-                ? 'bg-blue-600 hover:bg-blue-700 cursor-pointer shadow-sm hover:shadow-md hover:-translate-y-px'
-                : 'bg-stone-200 cursor-not-allowed'
-            }`}
-          >
-            {loading ? (
-              <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-            ) : showStop ? (
-              <Square className="w-3 h-3 text-white" fill="currentColor" strokeWidth={0} />
-            ) : (
-              <ArrowUp className={`w-4 h-4 ${hasContent ? 'text-white' : 'text-stone-400'}`} />
-            )}
-          </button>
-        </div>
+        ) : (
+          <>
+            {textareaNode}
+            <div className="flex items-center justify-between gap-2 px-3 pb-3 pt-1">
+              <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+                <TypeSegmented
+                  value={inputType}
+                  chosen={typeChosen}
+                  onSelect={handleActionClick}
+                  disabled={busy}
+                />
+                {typeChosen && (
+                  <button
+                    type="button"
+                    onClick={handleResetType}
+                    disabled={busy}
+                    title="Reset scan type"
+                    aria-label="Reset scan type"
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[13px] text-stone-500 hover:text-stone-800 hover:bg-stone-100 transition-colors disabled:opacity-60"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    Reset
+                  </button>
+                )}
+              </div>
+              {sendButton}
+            </div>
+          </>
+        )}
       </div>
     );
   };
 
-  const quickActionsRow = (
-    <div className="flex flex-wrap justify-center gap-2">
-      {QUICK_ACTIONS.map((action) => {
-        const isActive = inputType === action.id;
-        const Icon = action.icon;
+  const suggestionsList = (
+    <div className="w-full flex flex-col gap-0.5">
+      {QUICK_ACTIONS.map((a) => {
+        const Icon = a.icon;
         return (
           <button
-            key={action.id}
-            onClick={() => handleActionClick(action.id)}
-            className={`flex items-center justify-center gap-1.5 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-full border text-[11.5px] sm:text-[12.5px] font-semibold transition-all duration-200 ${
-              isActive
-                ? 'border-black/10 bg-white text-stone-800 shadow-sm'
-                : 'border-black/10 bg-white/60 text-stone-500 hover:bg-white hover:border-black/20'
-            }`}
+            key={a.id}
+            onClick={() => handleActionClick(a.id)}
+            className="flex items-center gap-3 sm:gap-4 px-2.5 sm:px-3 py-2.5 rounded-2xl text-left text-[15.5px] sm:text-[17px] text-stone-800 hover:bg-stone-200/60 transition-colors"
           >
-            <Icon className={`w-3.5 h-3.5 ${isActive ? 'text-[#C65B39]' : 'opacity-60'}`} />
-            {action.label}
+            <Icon className="w-[19px] h-[19px] text-stone-600 flex-shrink-0" strokeWidth={1.6} />
+            <span className="truncate">{SUGGESTION_TEXT[a.id]}</span>
           </button>
         );
       })}
     </div>
   );
 
+  const headerBar = (
+    <div className={`flex items-center justify-between gap-2 sm:gap-3 px-3 sm:px-5 pt-[max(0.5rem,env(safe-area-inset-top))] pb-2 min-h-[56px] sm:min-h-[60px] flex-shrink-0 bg-transparent`}>
+      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+        <button
+          onClick={() => setMobileSidebarOpen(true)}
+          title="Open menu"
+          className="md:hidden p-2 -ml-1 rounded-full text-stone-600 hover:bg-stone-200/60 transition-colors flex-shrink-0"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+
+        <span
+          key={`m-${topHeaderLabel}`}
+          className="md:hidden text-[15px] sm:text-[16px] font-semibold text-stone-800 truncate animate-[scyraFadeIn_0.35s_ease-out]"
+          style={{ fontFamily: FONT_BODY }}
+        >
+          {hasStartedConversation ? topHeaderLabel : 'Custos AI'}
+        </span>
+        {hasScan && pinned && <Pin className="md:hidden w-3 h-3 text-stone-600 fill-stone-600 flex-shrink-0" />}
+
+        <div className="hidden md:flex items-center gap-1 min-w-0">
+          {!hasStartedConversation ? null : renaming ? (
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onBlur={handleRenameCommit}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleRenameCommit();
+                if (e.key === 'Escape') setRenaming(false);
+              }}
+              className="text-[15px] font-semibold text-stone-800 bg-white rounded-lg px-2.5 py-1 outline-none border border-black/10 focus:border-black/20"
+              style={{ fontFamily: FONT_BODY }}
+            />
+          ) : (
+            <>
+              <span
+                key={`d-${topHeaderLabel}`}
+                className="text-[15px] font-semibold text-stone-800 truncate flex items-center gap-1.5 animate-[scyraFadeIn_0.35s_ease-out]"
+                style={{ fontFamily: FONT_BODY }}
+              >
+                {topHeaderLabel}
+                {pinned && hasScan && <Pin className="w-3 h-3 text-stone-600 fill-stone-600" />}
+              </span>
+              {hasScan && (
+                <ChatHeaderMenu
+                  onRename={handleRenameStart}
+                  onPin={handlePinToggle}
+                  onDelete={handleHeaderDelete}
+                  onOpenDocument={handleOpenDocumentReport}
+                  onOpenPresentation={handleOpenPresentationReport}
+                  pinned={pinned}
+                />
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        {hasScan && !renaming && (
+          <button
+            onClick={handleHeaderShare}
+            title="Share"
+            className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-stone-600 hover:bg-stone-200/60 transition-colors text-[14px] font-medium"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+            Share
+          </button>
+        )}
+        {hasScan && (
+          <div className="md:hidden">
+            <MobileChatHeaderMenu
+              onShare={handleHeaderShare}
+              onPin={handlePinToggle}
+              onDelete={handleHeaderDelete}
+              onOpenDocument={handleOpenDocumentReport}
+              onOpenPresentation={handleOpenPresentationReport}
+              pinned={pinned}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="flex flex-col h-screen w-full">
-      {/* ChatGPT-style top banner — shown only while the browser reports
-          being offline. Dismissible; reappears automatically if the
-          connection drops again, and clears itself once back online. */}
+    <div className="flex flex-col h-[100dvh] w-full">
       {showOfflineBanner && (
         <ErrorBanner
           code="offline"
@@ -1398,11 +1700,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
 
       <div className={`flex flex-1 min-h-0 w-full ${PAGE_WASH_BG} overflow-hidden`} style={{ fontFamily: FONT_BODY }}>
       <style jsx global>{`
-        /* Only the script-specific fonts (Urdu/Devanagari, used for
-           script-aware rendering of scanned message content) still load
-           this way — DM Serif Display and Inter (heading/body) now come
-           from next/font in layout.tsx, which preloads them before first
-           paint and avoids any flash of fallback text. */
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Urdu:wght@400;600;700&family=Noto+Sans+Devanagari:wght@400;500;600&display=swap');
 
         @keyframes scyraFadeIn {
@@ -1444,7 +1741,29 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
           animation: scyraShimmer 2.2s ease-in-out infinite alternate;
         }
 
-        /* Animated thinking dots shown while waiting for the first streamed token */
+        /* kept for any other component still using it — no more orange */
+        @keyframes scyraSweep {
+          from { background-position: 100% 0; }
+          to { background-position: 0% 0; }
+        }
+        .scyra-sweep-text {
+          background-image: linear-gradient(
+            90deg,
+            #78716c 0%,
+            #78716c 40%,
+            #d6d3d1 50%,
+            #78716c 60%,
+            #78716c 100%
+          );
+          background-size: 250% 100%;
+          background-repeat: no-repeat;
+          -webkit-background-clip: text;
+          background-clip: text;
+          color: transparent;
+          -webkit-text-fill-color: transparent;
+          animation: scyraSweep 0.85s ease-in-out 2 alternate both;
+        }
+
         @keyframes scyraDotBounce {
           0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
           30% { transform: translateY(-4px); opacity: 1; }
@@ -1453,11 +1772,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
         .scyra-scroll {
           scrollbar-width: thin;
           scrollbar-color: #d6d3d1 transparent;
-          /* NOTE: scrollbar-gutter: stable was removed here — it reserved
-             a fixed gutter that made the scrollbar thumb feel "sticky"/
-             resistant right where it sits next to the input composer.
-             Without it the scrollbar only appears when actually needed
-             and drags freely all the way to the true bottom. */
         }
         .scyra-scroll::-webkit-scrollbar {
           width: 6px;
@@ -1470,8 +1784,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
           background-color: #d6d3d1;
           border-radius: 9999px;
         }
-        /* Scrollbar goes noticeably darker on hover, so it reads as an
-           active/draggable control instead of a faint, easy-to-miss line. */
         .scyra-scroll:hover::-webkit-scrollbar-thumb {
           background-color: #78716c;
         }
@@ -1484,7 +1796,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
           width: 0;
         }
 
-        /* Bold bullet lists */
         .scyra-list {
           list-style: none;
           padding-left: 1.5rem;
@@ -1505,14 +1816,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
           font-size: 1.2em;
           color: #1a1a1a;
         }
-        /* Collapses the gap when the AI's markdown output produces two
-           back-to-back list blocks (e.g. each bullet emitted as its own
-           tiny list, separated by a blank line) instead of one shared
-           <ul>. Without this, each list's own top/bottom margin stacks
-           with the next one's, producing the large gaps between bullets
-           seen in follow-up answers. This rule makes consecutive lists
-           read as one continuous list visually, regardless of how the
-           markdown parser split them. */
         .scyra-list + .scyra-list,
         .scyra-list + ol,
         ol + .scyra-list,
@@ -1532,6 +1835,7 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
         onOpenModal={setActiveModal}
         history={displayHistory}
         historyLoading={historyLoading}
+        activeId={activeScanId}
         onSelectHistory={handleSelectHistory}
         onHistoryShare={handleHistoryShare}
         onHistoryPin={handleHistoryPinToggle}
@@ -1550,129 +1854,72 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
             panelOpen ? 'md:w-[50vw] flex-1' : 'flex-1'
           }`}
         >
-          <div className={`md:hidden flex items-center justify-between gap-2 px-4 py-3 border-b border-black/10 flex-shrink-0 ${MAIN_COLUMN_BG}`}>
-            <div className="flex items-center gap-2 min-w-0">
-              <button
-                onClick={() => setMobileSidebarOpen(true)}
-                title="Open menu"
-                className="p-1.5 -ml-1.5 rounded-lg text-stone-600 hover:bg-stone-100 transition-colors flex-shrink-0"
-              >
-                <Menu className="w-5 h-5" />
-              </button>
-              <span
-                className="text-[15px] font-semibold text-stone-800 truncate"
-                style={{ fontFamily: FONT_BODY }}
-              >
-                {hasStartedConversation ? topHeaderLabel : 'Custos AI'}
-              </span>
-              {hasStartedConversation && pinned && (
-                <Pin className="w-3 h-3 text-blue-600 fill-blue-600 flex-shrink-0" />
-              )}
-            </div>
-            {hasStartedConversation && (
-              <MobileChatHeaderMenu
-                onShare={handleHeaderShare}
-                onPin={handlePinToggle}
-                onDelete={handleHeaderDelete}
-                onOpenDocument={handleOpenDocumentReport}
-                onOpenPresentation={handleOpenPresentationReport}
-                pinned={pinned}
-              />
-            )}
-          </div>
+          {headerBar}
 
           {!hasStartedConversation ? (
-            <div className="flex-1 min-h-0 overflow-y-auto scyra-scroll flex flex-col items-center justify-center px-4 sm:px-5 py-10 sm:py-16">
-              <div className="w-full max-w-3xl text-center mb-6">
-                <h1
-                  className="text-[28px] sm:text-[36px] font-light tracking-wide text-stone-800"
-                  style={{ fontFamily: FONT_HEADING }}
-                >
-                  {welcomeCopy.title}
-                </h1>
-                <p className="text-stone-500 text-[13.5px] sm:text-[14px] mt-2 px-2" style={{ fontFamily: FONT_BODY }}>
-                  {welcomeCopy.subtitle}
-                </p>
-              </div>
-              <div className="w-full max-w-3xl">
-                {renderInputBox('home')}
-                <div className="mt-3">{quickActionsRow}</div>
+            <div className="relative flex-1 min-h-0 flex flex-col">
+              <div className="relative z-10 flex-1 min-h-0 overflow-y-auto scyra-scroll flex flex-col items-center px-3 sm:px-5 md:px-6 md:justify-center md:pb-[10vh]">
+                <div className="w-full max-w-3xl flex-1 md:flex-none flex flex-col items-center justify-center">
+                  <div
+                    className={`flex items-center justify-center gap-2.5 sm:gap-3 md:gap-4 flex-wrap text-center transition-opacity duration-300 ease-out ${
+                      greetingReady ? 'opacity-100' : 'opacity-0'
+                    }`}
+                    aria-busy={!greetingReady}
+                  >
+                    <img
+                      src={LOGO_SRC}
+                      alt={LOGO_ALT}
+                      className="w-9 h-9 xs:w-10 xs:h-10 sm:w-11 sm:h-11 md:w-12 md:h-12 object-contain flex-shrink-0 select-none pointer-events-none"
+                      draggable={false}
+                    />
+                    <h1
+                      className="text-[26px] xs:text-[28px] sm:text-[34px] md:text-[40px] leading-tight tracking-tight font-normal text-stone-900 min-h-[44px] break-words"
+                      style={{ fontFamily: FONT_HEADING }}
+                    >
+                      {greeting || ' '}
+                    </h1>
+                  </div>
+                </div>
+                <div className="w-full max-w-3xl mt-3 md:mt-6">{suggestionsList}</div>
+                <div className="w-full max-w-3xl mt-3 md:mt-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:pb-0">
+                  {renderInputBox('home')}
+                </div>
               </div>
             </div>
           ) : (
             <>
-              {/* Relative wrapper so the switchingHistory skeleton overlay can
-                  sit exactly over the scrollable chat area (and nothing else). */}
               <div className="flex-1 min-h-0 relative overflow-hidden">
                 <div
                   ref={scrollContainerRef}
                   className="absolute inset-x-0 top-0 bottom-0 overflow-y-auto scyra-scroll"
                 >
-                  <div className={`hidden md:flex sticky top-0 z-10 px-4 sm:px-5 py-3 items-center justify-between gap-1.5 ${MAIN_COLUMN_BG}`}>
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      {renaming ? (
-                        <input
-                          autoFocus
-                          value={renameValue}
-                          onChange={(e) => setRenameValue(e.target.value)}
-                          onBlur={handleRenameCommit}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleRenameCommit();
-                            if (e.key === 'Escape') setRenaming(false);
-                          }}
-                          className="text-[13.5px] sm:text-[14px] font-semibold text-stone-800 bg-white rounded-md px-2 py-0.5 outline-none border border-black/10 focus:border-black/20"
-                          style={{ fontFamily: FONT_BODY }}
-                        />
-                      ) : (
-                        <>
-                          <span className="text-[13.5px] sm:text-[14px] font-semibold text-stone-800 truncate flex items-center gap-1.5" style={{ fontFamily: FONT_BODY }}>
-                            {topHeaderLabel}
-                            {pinned && <Pin className="w-3 h-3 text-blue-600 fill-blue-600" />}
-                          </span>
-                          <ChatHeaderMenu
-                            onRename={handleRenameStart}
-                            onPin={handlePinToggle}
-                            onDelete={handleHeaderDelete}
-                            onOpenDocument={handleOpenDocumentReport}
-                            onOpenPresentation={handleOpenPresentationReport}
-                            pinned={pinned}
-                          />
-                        </>
-                      )}
-                    </div>
-                    {!renaming && (
-                      // Share is a labeled text+icon button, not icon-only —
-                      // easier to notice/tap, matches the mobile menu.
-                      <button
-                        onClick={handleHeaderShare}
-                        title="Share"
-                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-stone-500 hover:bg-stone-200/60 hover:text-stone-700 transition-colors flex-shrink-0 text-[12px] font-medium"
-                      >
-                        <Share2 className="w-3.5 h-3.5" />
-                        Share
-                      </button>
-                    )}
-                  </div>
-
                   {switchingHistory ? (
                     <ChatSwitchSkeleton />
                   ) : (
-                    // Moderate bottom padding creates breathing room
-                    // between the last message/bubble and the fixed input
-                    // composer below, while still letting the scroll
-                    // container reach its true bottom (bottom-0 on the
-                    // wrapper above, no more bottom-4 cut-off). Keeping
-                    // this value modest (rather than a very large one)
-                    // avoids short conversations looking like the
-                    // scrollbar "doesn't reach the bottom" — a big empty
-                    // padding block below short content makes the thumb
-                    // look short/stuck even though scrolling is correct.
-                    <div className="px-4 sm:px-5 pt-4 pb-10">
-                      <div className="max-w-3xl mx-auto space-y-6">
+                    <div className="px-3 sm:px-5 pt-2 pb-10">
+                      <div className="max-w-3xl mx-auto space-y-5 sm:space-y-6">
+                        {/* Earlier general chat (before the scan) — always stays on screen */}
+                        {preMessages.map((turn, i) =>
+                          turn.role === 'user' ? (
+                            <FollowUpUserBubble
+                              key={`pre-${i}`}
+                              content={turn.content}
+                              onCopy={() => {}}
+                              onEdit={() => handleEditFollowUp(turn.content)}
+                            />
+                          ) : (
+                            <FollowUpAiBubble
+                              key={`pre-${i}`}
+                              content={turn.content}
+                              streaming={false}
+                              onSuggestionClick={handleSuggestionClick}
+                            />
+                          )
+                        )}
+
                         {contextInputContent && (loading || contextResult || errorCode) && (
                           <UserMessage
                             content={contextInputContent}
-                            label={getContextLabels(contextInputType).scanTypeLabel}
                             inputType={(contextInputType as InputType) ?? 'text'}
                             onEdit={handleEditUserMessage}
                             onRetry={handleRetry}
@@ -1681,7 +1928,13 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
 
                         {loading && (
                           <div ref={progressRef} className="flex items-start">
-                            <ScanStepFlow inputType={inputType} />
+                            <ThinkingBlock
+                              steps={
+                                thinkingSteps.length > 0
+                                  ? [...thinkingSteps, 'Preparing your report']
+                                  : [READING_STEP[(contextInputType as InputType) ?? inputType]]
+                              }
+                            />
                           </div>
                         )}
 
@@ -1708,7 +1961,7 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
                           </div>
                         )}
 
-                        {contextResult && !loading && followUpMessages.map((turn, i) =>
+                        {!loading && followUpMessages.map((turn, i) =>
                           turn.role === 'user' ? (
                             <FollowUpUserBubble
                               key={i}
@@ -1725,7 +1978,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
                               streaming={turn.streaming || false}
                               onSuggestionClick={handleSuggestionClick}
                               onRetry={() => {
-                                // Retry: resend the same question
                                 const prevUser = followUpMessages[i - 1];
                                 if (prevUser && prevUser.role === 'user') {
                                   void handleFollowUpSend(prevUser.content);
@@ -1742,13 +1994,13 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
                 </div>
               </div>
 
-              <div className={`flex-shrink-0 px-4 sm:px-5 pb-4 ${MAIN_COLUMN_BG}`}>
+              <div className={`flex-shrink-0 px-3 sm:px-5 md:px-6 pb-[max(1rem,env(safe-area-inset-bottom))] bg-transparent`}>
                 <div className="max-w-3xl mx-auto">
                   {renderInputBox('chat')}
                   {shake && (
-                    <p className="text-xs text-red-500 mt-2 ml-1 font-medium">Please type or paste something to scan.</p>
+                    <p className="text-[13px] text-red-500 mt-2 ml-3 font-medium">Please type or paste something to scan.</p>
                   )}
-                  <p className="text-center text-[10.5px] sm:text-[11px] text-stone-400 mt-3" style={{ fontFamily: FONT_BODY }}>
+                  <p className="text-center text-[12px] text-stone-400 mt-2.5" style={{ fontFamily: FONT_BODY }}>
                     Custos AI can make mistakes. Double-check important results.
                   </p>
                 </div>
@@ -1780,8 +2032,6 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
         />
       )}
 
-      {/* Delete now always asks for confirmation first (sidebar kebab menu
-          and chat header both route here) instead of deleting instantly. */}
       {confirmDeleteId && (
         <DeleteConfirmModal
           onCancel={() => setConfirmDeleteId(null)}

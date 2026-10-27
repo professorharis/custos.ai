@@ -24,10 +24,8 @@ export const FONT_DEVANAGARI = "'Noto Sans Devanagari', 'Inter', ui-sans-serif, 
 const ARABIC_URDU_SCRIPT_REGEX = /[\u0600-\u06FF\u0750-\u077F\uFB50-\uFDFF\uFE70-\uFEFF]/;
 const DEVANAGARI_SCRIPT_REGEX = /[\u0900-\u097F]/;
 
-// Picks a proper professional font (+ text direction) based on the
-// script actually used in the message — so Urdu/Arabic renders in a
-// real Urdu typeface instead of Inter, Hindi in Devanagari, and
-// everything else stays in the default Latin font.
+// Picks a proper font (+ text direction) based on the script actually
+// used in the message.
 export function getMessageTypography(text: string): { fontFamily: string; dir: 'rtl' | 'ltr' } {
   if (ARABIC_URDU_SCRIPT_REGEX.test(text)) {
     return { fontFamily: FONT_URDU, dir: 'rtl' };
@@ -73,15 +71,11 @@ export interface HistoryEntry {
   raw?: any;
 }
 
-// A single turn in the post-scan "ask about this report" follow-up thread.
-// Not persisted to Supabase history — lives only for the current scan
-// result's lifetime in memory.
+// A single turn in the "ask about this report" / general chat thread.
 export interface FollowUpMessage {
   role: 'user' | 'assistant';
   content: string;
-  // Present only on assistant turns that redirected an off-topic question
-  // back to cybersecurity/scam-analysis territory — rendered as tappable
-  // quick-suggestion chips right under that message.
+  // Present on assistant turns that carry suggestion chips.
   suggestions?: string[];
 }
 
@@ -89,6 +83,9 @@ export interface FollowUpMessage {
 // Config / static data
 // ─────────────────────────────────────────────────────────────────────────
 
+// NOTE: the UI no longer shows this checklist (replaced by the AI-written
+// "Thinking…" block). Kept exported so any other file importing it
+// doesn't break.
 export const CHECKLIST_STEPS: Record<InputType, string[]> = {
   email: [
     'Detecting content type',
@@ -124,21 +121,34 @@ export const CHECKLIST_STEPS: Record<InputType, string[]> = {
   ],
 };
 
-export const SAMPLE_SENTENCES: Record<InputType, string> = {
-  text: 'Paste a message here to detect scams, phishing attempts, and fraudulent content...',
-  sms: 'Paste an SMS here to identify scam messages and suspicious activity...',
-  email: 'Paste an email here to detect phishing, fraud, and malicious content...',
-  url: 'Paste a website URL here and let AI scan it for phishing, malware, and security risks...',
+// Used when the AI-written steps are not available (slow / failed request),
+// so the scan screen always shows real-looking steps for the content type.
+export const FALLBACK_SCAN_STEPS: Record<InputType, string[]> = {
+  email: ['Analyzing email', 'Checking sender details', 'Verifying links', 'Finding grammar mistakes', 'Checking urgency tactics'],
+  sms: ['Reading the message', 'Checking sender ID', 'Verifying links and numbers', 'Checking urgency tactics'],
+  url: ['Parsing the domain', 'Verifying SSL certificate', 'Checking redirects', 'Checking phishing patterns'],
+  text: ['Reading the message', 'Checking scam patterns', 'Finding fake claims', 'Checking urgency tactics'],
 };
 
-// Shown as the textarea placeholder on both the home screen and the chat
-// bar. Deliberately not a generic "Write a message" — this is a security
-// scanner, not a chat app.
-export const INPUT_PLACEHOLDER = 'Scan & analyze with Custos AI…';
+// Full list shown while a scan runs:
+//   "Analyzing…"  ->  AI-written steps for THIS content (or fallbacks)  ->  "Generating report…"
+export function buildScanSteps(aiSteps: string[], type: InputType): string[] {
+  const middle = aiSteps.length > 0 ? aiSteps : (FALLBACK_SCAN_STEPS[type] ?? FALLBACK_SCAN_STEPS.text);
+  return ['Analyzing', ...middle, 'Generating report'];
+}
 
-// Shown instead, once a scan result exists — the box has switched into
-// "ask about this report" follow-up mode.
-export const FOLLOWUP_PLACEHOLDER = 'Ask about this anaylsis';
+// Short ghost-typing samples (less text on the home screen).
+export const SAMPLE_SENTENCES: Record<InputType, string> = {
+  text: 'Paste a message…',
+  sms: 'Paste an SMS…',
+  email: 'Paste an email…',
+  url: 'Paste a link…',
+};
+
+export const INPUT_PLACEHOLDER = 'Paste or ask anything…';
+
+// Shown once a scan result exists (typo "anaylsis" fixed).
+export const FOLLOWUP_PLACEHOLDER = 'Ask about this analysis';
 
 export const QUICK_ACTIONS = [
   { id: 'text' as const, label: 'Analyze text', icon: FileText },
@@ -161,8 +171,6 @@ export const TYPE_HEADER_LABEL: Record<InputType, string> = {
   url: 'URL Scan Analysis',
 };
 
-// Human-readable label used in the "This looks like a new …" confirmation
-// popup when the follow-up box detects fresh scannable content.
 export const NEW_CONTENT_TYPE_LABEL: Record<InputType, string> = {
   text: 'text message',
   sms: 'SMS message',
@@ -182,7 +190,7 @@ export const RECOMMENDATION_HEADINGS = [
 // Colour tokens
 // ─────────────────────────────────────────────────────────────────────────
 
-export const SIDEBAR_BG = 'bg-[#F7F6F3]';
+export const SIDEBAR_BG = 'bg-[#FCFCFC]';
 export const MAIN_AREA_BG = 'bg-[#F3F3F3]';
 export const PAGE_BASE_BG = 'bg-[#FFFFFF]';
 
@@ -216,23 +224,22 @@ export function formatRecommendation(text: string) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Follow-up vs. new-scan detection
+// Follow-up vs. new-scan vs. general-chat detection
 //
-// Once a scan result is showing, the input box switches into "ask about
-// this report" mode. These helpers decide, for whatever the user types
-// next, whether it's:
 //   (a) a follow-up question about the existing report,
-//   (b) the exact same content being resubmitted (e.g. a retry after a
-//       connection hiccup) — silently re-scanned, no popup, or
-//   (c) genuinely new scannable content (a different email/SMS/URL/text)
-//       — triggers the "Start a new scan?" confirmation popup.
-// These are heuristics, not perfect classifiers, and can be tuned further.
+//   (b) the exact same content resubmitted (silent re-scan),
+//   (c) genuinely new scannable content -> "Start a new scan?" popup,
+//   (d) a greeting / general question with NO scannable content -> plain
+//       chat reply, no scan steps at all (see isGeneralQuestion).
+// These are heuristics and can be tuned further.
 // ─────────────────────────────────────────────────────────────────────────
 
 const CONTAINS_URL_REGEX = /(https?:\/\/[^\s]+|www\.[^\s]+)/i;
 const EMAIL_ADDRESS_REGEX = /[^\s@]+@[^\s@]+\.[^\s@]+/;
 const EMAIL_MARKER_REGEX = /(subject:|from:|dear [a-z]+,|regards,|sincerely,|to whom it may concern)/i;
 const SUSPICIOUS_MESSAGE_REGEX = /(click here|verify your account|limited time|urgent(ly)?|congratulations|you('|’)ve won|winner|otp|one[- ]time (code|password)|account (has been|will be) (suspended|locked)|reset your password|confirm your (details|identity|payment))/i;
+
+const GREETING_REGEX = /^(hi|hello|hey|salam|salaam|assalam[\w\s-]*|aoa|good (morning|afternoon|evening)|thanks|thank you|shukriya)\b/i;
 
 const FOLLOWUP_TRIGGER_STARTS = [
   'why', 'what', 'how', 'explain', 'summarize', 'summarise', 'translate',
@@ -260,6 +267,17 @@ export function looksLikeFollowUpQuestion(text: string): boolean {
   return FOLLOWUP_TRIGGER_STARTS.some((w) => lower.startsWith(w));
 }
 
+// True = this is a greeting / general question, NOT scannable content.
+// The caller should send it straight to the chat endpoint (no scan steps).
+export function isGeneralQuestion(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  if (CONTAINS_URL_REGEX.test(t)) return false;
+  if (EMAIL_MARKER_REGEX.test(t) || SUSPICIOUS_MESSAGE_REGEX.test(t)) return false;
+  if (t.length > 300 || /\n/.test(t)) return false;
+  return GREETING_REGEX.test(t) || looksLikeFollowUpQuestion(t);
+}
+
 export function looksLikeNewScanContent(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed.length < 15) return false;
@@ -280,8 +298,7 @@ export function looksLikeNewScanContent(text: string): boolean {
   return false;
 }
 
-// Rough auto-detection of scan type for freshly-pasted follow-up content,
-// mirroring the logic a user would pick manually via the quick actions.
+// Rough auto-detection of scan type for freshly-pasted content.
 export function detectInputType(text: string): InputType {
   const trimmed = text.trim();
   const isBareUrl = CONTAINS_URL_REGEX.test(trimmed) && trimmed.split(/\s+/).length <= 6;
