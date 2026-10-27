@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowRight, Eye, EyeOff, Mail, ShieldCheck, X } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, Mail, X } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { FONT_BODY, FONT_HEADING } from './types';
 
@@ -158,9 +158,11 @@ export function AuthModal({
         </button>
 
         <div className="flex flex-col items-center text-center">
-          <span className="w-11 h-11 rounded-full bg-[#C65B39] text-white flex items-center justify-center">
-            <ShieldCheck className="w-6 h-6" />
-          </span>
+          <img
+            src="/logo.png"
+            alt="Scyra"
+            className="w-11 h-11 rounded-full object-contain"
+          />
           <h2
             className="mt-4 text-[22px] font-semibold tracking-tight text-stone-900"
             style={{ fontFamily: FONT_HEADING }}
