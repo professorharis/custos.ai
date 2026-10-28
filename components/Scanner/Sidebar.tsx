@@ -102,7 +102,17 @@ function TypingLabel({ text, animate }: { text: string; animate: boolean }) {
     return () => clearInterval(id);
   }, [text, animate]);
 
-  return <span className="truncate">{shown || '\u00A0'}</span>;
+  return (
+    <span
+      className="block flex-1 min-w-0 overflow-hidden whitespace-nowrap"
+      style={{
+        WebkitMaskImage: 'linear-gradient(to right, #000 calc(100% - 26px), transparent)',
+        maskImage: 'linear-gradient(to right, #000 calc(100% - 26px), transparent)',
+      }}
+    >
+      {shown || '\u00A0'}
+    </span>
+  );
 }
 
 function escapeRegExp(s: string) {
@@ -118,7 +128,7 @@ function Highlight({ text, query }: { text: string; query: string }) {
     <>
       {parts.map((p, i) =>
         i % 2 === 1 ? (
-          <span key={i} className="font-semibold text-stone-900">
+          <span key={i} className="font-medium text-stone-900">
             {p}
           </span>
         ) : (
@@ -322,7 +332,7 @@ function HistoryItemMenu({
   };
 
   const itemCls =
-    'w-full flex items-center gap-2.5 px-3.5 py-2.5 md:py-2 text-[13.5px] text-stone-700 hover:bg-stone-100 transition-colors';
+    'w-full flex items-center gap-2.5 px-3.5 py-2.5 md:py-2 text-[13px] text-stone-700 hover:bg-stone-100 transition-colors';
 
   return (
     <div className="relative" ref={ref}>
@@ -362,7 +372,7 @@ function HistoryItemMenu({
           <button
             role="menuitem"
             onClick={(e) => { e.stopPropagation(); onDelete(); setOpen(false); }}
-            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 md:py-2 text-[13.5px] text-red-600 hover:bg-red-50 transition-colors"
+            className="w-full flex items-center gap-2.5 px-3.5 py-2.5 md:py-2 text-[13px] text-red-600 hover:bg-red-50 transition-colors"
           >
             <Trash2 className="w-4 h-4" strokeWidth={1.6} /> Delete
           </button>
@@ -540,7 +550,11 @@ function SidebarContents({
             aria-current={isActive ? 'page' : undefined}
             className="flex-1 min-w-0 text-left h-full flex items-center"
           >
-            <span className="text-[14.5px] leading-none text-stone-800 min-w-0 flex items-center gap-1.5">
+            <span
+              className={`w-full text-[14px] leading-none min-w-0 flex items-center gap-1.5 ${
+                isActive ? 'text-stone-900' : 'text-stone-700'
+              }`}
+            >
               {h.pinned && <Pin className={`w-3 h-3 flex-shrink-0 ${PIN_ACTIVE_CLASS}`} />}
               <TypingLabel text={h.label} animate={freshIds.has(h.id)} />
             </span>
@@ -564,8 +578,8 @@ function SidebarContents({
   };
 
   // Nav buttons: 15px regular text + thin 20px icon, compact row
-  const navBtn = `w-full flex items-center gap-3 px-3 ${ROW_H} rounded-lg text-[15px] font-normal text-stone-800 ${ROW_HOVER} transition-colors`;
-  const sectionLabel = 'px-3 pt-5 pb-1.5 text-[13px] font-normal text-stone-500';
+  const navBtn = `w-full flex items-center gap-3 px-3 ${ROW_H} rounded-lg text-[14.5px] font-normal text-stone-800 ${ROW_HOVER} transition-colors`;
+  const sectionLabel = 'px-3 pt-5 pb-1.5 text-[12.5px] font-normal text-stone-500';
 
   return (
     <aside
@@ -582,7 +596,7 @@ function SidebarContents({
             draggable={false}
           />
           <span
-            className="font-semibold text-stone-800 text-[20px] tracking-tight truncate"
+            className="font-normal text-stone-800 text-[21px] tracking-tight truncate"
             style={{ fontFamily: FONT_HEADING }}
           >
             Custos AI
@@ -636,7 +650,7 @@ function SidebarContents({
         ) : history.length === 0 ? (
           <>
             <p className={sectionLabel}>Recent</p>
-            <p className="px-3 py-2 text-[14px] text-stone-400">No scans yet</p>
+            <p className="px-3 py-2 text-[13.5px] text-stone-400">No scans yet</p>
           </>
         ) : (
           <>
@@ -673,13 +687,13 @@ function SidebarContents({
             </p>
             <button
               onClick={() => onOpenAuth('login')}
-              className="w-full h-10 rounded-lg border border-stone-300 text-[14px] font-medium text-stone-800 hover:bg-[#EBEBEB] transition-colors"
+              className="w-full h-10 rounded-lg border border-stone-300 text-[14px] font-normal text-stone-800 hover:bg-[#EBEBEB] transition-colors"
             >
               Log in
             </button>
             <button
               onClick={() => onOpenAuth('signup')}
-              className="w-full h-10 rounded-lg bg-stone-900 text-[14px] font-medium text-white hover:bg-stone-700 transition-colors"
+              className="w-full h-10 rounded-lg bg-stone-900 text-[14px] font-normal text-white hover:bg-stone-700 transition-colors"
             >
               Sign up
             </button>

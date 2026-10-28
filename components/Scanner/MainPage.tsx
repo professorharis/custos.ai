@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { ArrowUp, Menu, Pin, RotateCcw, Share2, Square } from 'lucide-react';
+import { ArrowUp, Pin, RotateCcw, Share2, Square } from 'lucide-react';
 import type { ScamResult } from '@/lib/types';
 import { useScanResult } from '@/context/ScanResultContext';
 import { getRiskLevelLabel } from '@/lib/scannerHelpers';
@@ -27,7 +27,9 @@ import {
   DeleteConfirmModal,
   FollowUpAiBubble,
   FollowUpUserBubble,
+  HamburgerIcon,
   MobileChatHeaderMenu,
+  NewChatButton,
   NewScanConfirmModal,
   ThinkingBlock,
   UserMessage,
@@ -78,8 +80,10 @@ const MAIN_COLUMN_BG = 'bg-[#FCFCFC]';
 const AUTO_SCROLL_THRESHOLD_PX = 120;
 const HISTORY_SWITCH_SKELETON_MS = 380;
 const NEW_SCAN_HOME_FLASH_MS = 220;
-const REQUEST_TIMEOUT_MS = 35000;
+const REQUEST_TIMEOUT_MS = 70000;
 const MIN_SCAN_DURATION_MS = 3500;
+const THINKING_STEP_MS = 1500; // one thinking step is shown for ~1.5s
+const THINKING_MAX_MS = 9500;
 
 // How many scans the sidebar loads. (Was 8 → the oldest item disappeared
 // every time a new scan was added.)
@@ -115,41 +119,59 @@ function buildScanDetails(
   };
 }
 
+const TITLE_TYPE_LABEL: Record<InputType, string> = {
+  url: 'Link',
+  email: 'Email',
+  sms: 'SMS',
+  text: 'Message',
+};
+
+const KNOWN_BRANDS = [
+  'Easypaisa', 'JazzCash', 'Jazz', 'Zong', 'Telenor', 'Ufone', 'PayPal', 'Amazon', 'Netflix', 'Apple',
+  'Google', 'Microsoft', 'Facebook', 'Instagram', 'WhatsApp', 'DHL', 'FedEx', 'Daraz', 'Meezan',
+  'Alfalah', 'NADRA', 'FBR', 'BISP', 'Binance', 'Telegram', 'TikTok',
+];
+const CAPS_STOPLIST = new Set([
+  'SMS', 'OTP', 'URL', 'PIN', 'CNIC', 'ATM', 'USD', 'PKR', 'ASAP', 'FREE', 'NOW', 'URGENT', 'ALERT',
+  'DEAR', 'HTTP', 'HTTPS', 'WWW', 'COM', 'PDF', 'KYC', 'ID', 'AM', 'PM', 'RS', 'NOTICE', 'WARNING',
+]);
+
+/** Brand / organisation the message is about, if it is easy to spot. */
+function guessBrand(text: string): string {
+  const lower = text.toLowerCase();
+  const known = KNOWN_BRANDS.find((b) => new RegExp(`\\b${b.toLowerCase()}\\b`).test(lower));
+  if (known) return known;
+  const caps = (text.match(/\b[A-Z]{2,6}\b/g) ?? []).find((w) => !CAPS_STOPLIST.has(w));
+  return caps ?? '';
+}
+
+// Short, clean titles like "HBL SMS Analysis" / "PayPal Email Analysis" / "example.com Link Analysis".
+// (The AI title from /api/generate-title replaces this a moment later.)
 function deriveFallbackTitle(content: string, type: InputType): string {
   const trimmed = (content || '').trim();
+  const label = TITLE_TYPE_LABEL[type];
   if (!trimmed) return TYPE_HEADER_LABEL[type];
 
   if (type === 'url') {
-    const match = trimmed.match(/https?:\/\/[^\s]+/)?.[0] ?? trimmed;
+    const match = trimmed.match(/(?:https?:\/\/|www\.)[^\s]+|\b(?:[a-z0-9-]+\.)+[a-z]{2,}[^\s]*/i)?.[0] ?? trimmed;
     try {
-      const withProtocol = match.startsWith('http') ? match : `https://${match}`;
-      const u = new URL(withProtocol);
-      const host = u.hostname.replace(/^www\./, '');
-      return `${host} Link Analysis`;
+      const u = new URL(match.startsWith('http') ? match : `https://${match}`);
+      return `${u.hostname.replace(/^www\./, '')} Link Analysis`;
     } catch {
-      return 'Suspicious Link Analysis';
+      return 'Link Analysis';
     }
   }
 
   if (type === 'email') {
-    const subject = trimmed.match(/subject:\s*(.+)/i)?.[1]?.trim();
-    const from = trimmed.match(/from:\s*([^\n<]+)/i)?.[1]?.trim();
-    if (subject) {
-      const clipped = subject.length > 42 ? `${subject.slice(0, 42)}…` : subject;
-      return `${clipped} — Email Analysis`;
-    }
-    if (from) {
-      const clipped = from.length > 32 ? `${from.slice(0, 32)}…` : from;
-      return `${clipped} Email Analysis`;
-    }
-    return 'Email Security Analysis';
+    const from = trimmed.match(/^\s*from\s*:\s*(.+)$/im)?.[1]?.trim() ?? '';
+    const name = from.replace(/<.*>/, '').replace(/["']/g, '').trim();
+    const domain = from.match(/@([a-z0-9.-]+\.[a-z]{2,})/i)?.[1]?.replace(/^(mail|email|info|noreply)\./i, '') ?? '';
+    const who = (name && !/@/.test(name) ? name : guessBrand(trimmed) || domain).slice(0, 26).trim();
+    return who ? `${who} Email Analysis` : 'Email Analysis';
   }
 
-  const words = trimmed.replace(/\s+/g, ' ').split(' ');
-  const preview = words.slice(0, 6).join(' ');
-  const suffix = type === 'sms' ? 'SMS Analysis' : 'Text Analysis';
-  if (!preview) return TYPE_HEADER_LABEL[type];
-  return `${preview}${words.length > 6 ? '…' : ''} — ${suffix}`;
+  const brand = guessBrand(trimmed);
+  return brand ? `${brand} ${label} Analysis` : `${label} Analysis`;
 }
 
 // ── Random greeting builder (picks once per mount) ───────────────────────
@@ -253,7 +275,7 @@ function TypeSegmented({
             aria-selected={active}
             disabled={disabled}
             onClick={() => onSelect(a.id)}
-            className={`px-2.5 sm:px-3 py-1 rounded-md text-[13px] sm:text-[14px] transition-colors disabled:opacity-60 ${
+            className={`px-2.5 sm:px-3 py-1 rounded-md text-[12.5px] sm:text-[13.5px] transition-colors disabled:opacity-60 ${
               active
                 ? 'bg-white text-stone-900 font-medium shadow-sm ring-1 ring-black/10'
                 : 'text-stone-600 hover:text-stone-900'
@@ -459,8 +481,23 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
   const abortControllerRef = useRef<AbortController | null>(null);
   const followUpAbortRef = useRef<AbortController | null>(null);
   const thinkingAbortRef = useRef<AbortController | null>(null);
+  const thinkingStepsRef = useRef<string[]>([]);
   const typeIndexRef = useRef(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // Height of the floating input bar (measured) — the chat scrolls underneath it
+  const [inputBarH, setInputBarH] = useState(110);
+  const inputBarObserverRef = useRef<ResizeObserver | null>(null);
+  const inputBarRef = useCallback((el: HTMLDivElement | null) => {
+    inputBarObserverRef.current?.disconnect();
+    inputBarObserverRef.current = null;
+    if (!el) return;
+    setInputBarH(el.offsetHeight);
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => setInputBarH(el.offsetHeight));
+      ro.observe(el);
+      inputBarObserverRef.current = ro;
+    }
+  }, []);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const progressRef = useRef<HTMLDivElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
@@ -629,9 +666,13 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
           const { done, value } = await reader.read();
           if (done) break;
           acc += decoder.decode(value, { stream: true });
-          setThinkingSteps(toSteps(acc, false));
+          const partial = toSteps(acc, false);
+          thinkingStepsRef.current = partial;
+          setThinkingSteps(partial);
         }
-        setThinkingSteps(toSteps(acc, true));
+        const all = toSteps(acc, true);
+        thinkingStepsRef.current = all;
+        setThinkingSteps(all);
       } catch {
         /* best-effort */
       }
@@ -734,6 +775,7 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     const thinkingController = new AbortController();
     thinkingAbortRef.current = thinkingController;
     setThinkingSteps([]);
+    thinkingStepsRef.current = [];
     void streamThinking(finalContent, type, thinkingController.signal);
 
     const startedAt = Date.now();
@@ -762,8 +804,14 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
       const scanResult: ScamResultWithFindings = { ...data, scanId };
 
       const elapsed = Date.now() - startedAt;
-      if (elapsed < MIN_SCAN_DURATION_MS) {
-        await new Promise((resolve) => setTimeout(resolve, MIN_SCAN_DURATION_MS - elapsed));
+      // Stay on screen long enough for the content-specific thinking steps to be read
+      const stepCount = Math.min(thinkingStepsRef.current.length + 1, 8);
+      const minMs = Math.min(
+        THINKING_MAX_MS,
+        Math.max(MIN_SCAN_DURATION_MS, stepCount * THINKING_STEP_MS + 800)
+      );
+      if (elapsed < minMs) {
+        await new Promise((resolve) => setTimeout(resolve, minMs - elapsed));
       }
       if (controller.signal.aborted) return;
 
@@ -828,7 +876,10 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
         safety_tips: scanResult.safetyTips as any,
       });
     } catch (err: unknown) {
-      if (err instanceof Error && err.name === 'AbortError') {
+      // A newer scan replaced this one → ignore silently
+      if (abortControllerRef.current !== controller) return;
+      // controller.abort('timeout') makes fetch reject with the string 'timeout' (not an AbortError)
+      if (err === 'timeout' || controller.signal.reason === 'timeout' || (err instanceof Error && err.name === 'AbortError')) {
         setErrorCode('timeout');
         return;
       }
@@ -1057,7 +1108,7 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
         }
       }
     } catch (err) {
-      if (err instanceof DOMException && err.name === 'AbortError') {
+      if (err === 'timeout' || (err instanceof DOMException && err.name === 'AbortError')) {
         if (controller.signal.reason === 'timeout') {
           setBubbleFallback("That took longer than expected. Please try asking again.");
         }
@@ -1490,7 +1541,7 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
           rows={1}
           disabled={busy}
           // 17px on phones (>=16px so iOS never zooms), 18px on desktop
-          className={`w-full bg-transparent ${padClass} border-none outline-none resize-none text-stone-900 placeholder:text-stone-500 text-[17px] sm:text-[18px] placeholder:text-[16px] sm:placeholder:text-[18px] leading-[1.55] relative z-10 ${
+          className={`w-full bg-transparent ${padClass} border-none outline-none resize-none text-stone-900 placeholder:text-stone-500 text-[16px] sm:text-[17px] placeholder:text-[15px] sm:placeholder:text-[16.5px] leading-[1.55] relative z-10 ${
             busy ? 'opacity-60 cursor-not-allowed' : ''
           }`}
           style={{
@@ -1502,7 +1553,7 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
         />
         {isTypingDemo && !message && !busy && (
           <div
-            className={`absolute inset-0 pointer-events-none ${padClass} text-[17px] sm:text-[18px] leading-[1.55] text-stone-400/80 z-0 select-none whitespace-pre-wrap`}
+            className={`absolute inset-0 pointer-events-none ${padClass} text-[16px] sm:text-[17px] leading-[1.55] text-stone-400/80 z-0 select-none whitespace-pre-wrap`}
             style={{ fontFamily: FONT_BODY }}
           >
             {demoText}
@@ -1592,9 +1643,9 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
           <button
             key={a.id}
             onClick={() => handleActionClick(a.id)}
-            className="flex items-center gap-3 sm:gap-4 px-2.5 sm:px-3 py-2.5 rounded-2xl text-left text-[15.5px] sm:text-[17px] text-stone-800 hover:bg-stone-200/60 transition-colors"
+            className="flex items-center gap-3 sm:gap-4 px-2.5 sm:px-3 py-2.5 rounded-2xl text-left text-[14.5px] sm:text-[15.5px] text-stone-800 hover:bg-stone-200/60 transition-colors"
           >
-            <Icon className="w-[19px] h-[19px] text-stone-600 flex-shrink-0" strokeWidth={1.6} />
+            <Icon className="w-[18px] h-[18px] text-stone-600 flex-shrink-0" strokeWidth={1.6} />
             <span className="truncate">{SUGGESTION_TEXT[a.id]}</span>
           </button>
         );
@@ -1602,26 +1653,28 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
     </div>
   );
 
+  const lastTurn = followUpMessages[followUpMessages.length - 1];
+  const replyComplete =
+    !loading &&
+    !followUpLoading &&
+    !followUpMessages.some((msg) => msg.streaming) &&
+    (!lastTurn || (lastTurn.role === 'assistant' && lastTurn.content.trim().length > 0));
+  const showDisclaimer = replyComplete && (!!contextResult || followUpMessages.length > 0);
+
   const headerBar = (
-    <div className={`flex items-center justify-between gap-2 sm:gap-3 px-3 sm:px-5 pt-[max(0.5rem,env(safe-area-inset-top))] pb-2 min-h-[56px] sm:min-h-[60px] flex-shrink-0 bg-transparent`}>
+    <div className="flex items-center justify-between gap-2 sm:gap-3 px-3 sm:px-5 pt-[max(0.5rem,env(safe-area-inset-top))] pb-2 min-h-[56px] sm:min-h-[60px] flex-shrink-0 bg-transparent">
       <div className="flex items-center gap-1.5 min-w-0 flex-1">
+        {/* Mobile: only the menu icon on the left (no chat name — it lives in the ⋮ dropdown) */}
         <button
           onClick={() => setMobileSidebarOpen(true)}
           title="Open menu"
-          className="md:hidden p-2 -ml-1 rounded-full text-stone-600 hover:bg-stone-200/60 transition-colors flex-shrink-0"
+          aria-label="Open menu"
+          className="md:hidden w-10 h-10 -ml-1 rounded-full text-stone-800 hover:bg-stone-200/60 active:bg-stone-200/60 transition-colors flex-shrink-0 flex items-center justify-center"
         >
-          <Menu className="w-5 h-5" />
+          <HamburgerIcon />
         </button>
 
-        <span
-          key={`m-${topHeaderLabel}`}
-          className="md:hidden text-[15px] sm:text-[16px] font-semibold text-stone-800 truncate animate-[scyraFadeIn_0.35s_ease-out]"
-          style={{ fontFamily: FONT_BODY }}
-        >
-          {hasStartedConversation ? topHeaderLabel : 'Custos AI'}
-        </span>
-        {hasScan && pinned && <Pin className="md:hidden w-3 h-3 text-stone-600 fill-stone-600 flex-shrink-0" />}
-
+        {/* Desktop: chat name + dropdown */}
         <div className="hidden md:flex items-center gap-1 min-w-0">
           {!hasStartedConversation ? null : renaming ? (
             <input
@@ -1633,14 +1686,14 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
                 if (e.key === 'Enter') handleRenameCommit();
                 if (e.key === 'Escape') setRenaming(false);
               }}
-              className="text-[15px] font-semibold text-stone-800 bg-white rounded-lg px-2.5 py-1 outline-none border border-black/10 focus:border-black/20"
+              className="text-[14.5px] font-medium text-stone-800 bg-white rounded-lg px-2.5 py-1 outline-none border border-black/10 focus:border-black/20"
               style={{ fontFamily: FONT_BODY }}
             />
           ) : (
             <>
               <span
                 key={`d-${topHeaderLabel}`}
-                className="text-[15px] font-semibold text-stone-800 truncate flex items-center gap-1.5 animate-[scyraFadeIn_0.35s_ease-out]"
+                className="text-[14.5px] font-medium text-stone-800 truncate flex items-center gap-1.5 animate-[scyraFadeIn_0.35s_ease-out]"
                 style={{ fontFamily: FONT_BODY }}
               >
                 {topHeaderLabel}
@@ -1666,22 +1719,29 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
           <button
             onClick={handleHeaderShare}
             title="Share"
-            className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-stone-600 hover:bg-stone-200/60 transition-colors text-[14px] font-medium"
+            className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-full text-stone-600 hover:bg-stone-200/60 transition-colors text-[13.5px] font-normal"
           >
             <Share2 className="w-3.5 h-3.5" />
             Share
           </button>
         )}
-        {hasScan && (
-          <div className="md:hidden">
-            <MobileChatHeaderMenu
-              onShare={handleHeaderShare}
-              onPin={handlePinToggle}
-              onDelete={handleHeaderDelete}
-              onOpenDocument={handleOpenDocumentReport}
-              onOpenPresentation={handleOpenPresentationReport}
-              pinned={pinned}
-            />
+
+        {/* Mobile right side: new scan (black circle) + ⋮ dropdown — only inside a chat */}
+        {hasStartedConversation && (
+          <div className="md:hidden flex items-center gap-1">
+            <NewChatButton onClick={handleNewScan} />
+            {hasScan && (
+              <MobileChatHeaderMenu
+                title={topHeaderLabel}
+                onShare={handleHeaderShare}
+                onRename={handleRenameStart}
+                onPin={handlePinToggle}
+                onDelete={handleHeaderDelete}
+                onOpenDocument={handleOpenDocumentReport}
+                onOpenPresentation={handleOpenPresentationReport}
+                pinned={pinned}
+              />
+            )}
           </div>
         )}
       </div>
@@ -1861,7 +1921,7 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
               <div className="relative z-10 flex-1 min-h-0 overflow-y-auto scyra-scroll flex flex-col items-center px-3 sm:px-5 md:px-6 md:justify-center md:pb-[10vh]">
                 <div className="w-full max-w-3xl flex-1 md:flex-none flex flex-col items-center justify-center">
                   <div
-                    className={`flex items-center justify-center gap-2.5 sm:gap-3 md:gap-4 flex-wrap text-center transition-opacity duration-300 ease-out ${
+                    className={`flex flex-col md:flex-row items-center justify-center gap-3 md:gap-4 text-center transition-opacity duration-300 ease-out ${
                       greetingReady ? 'opacity-100' : 'opacity-0'
                     }`}
                     aria-busy={!greetingReady}
@@ -1869,11 +1929,11 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
                     <img
                       src={LOGO_SRC}
                       alt={LOGO_ALT}
-                      className="w-9 h-9 xs:w-10 xs:h-10 sm:w-11 sm:h-11 md:w-12 md:h-12 object-contain flex-shrink-0 select-none pointer-events-none"
+                      className="w-11 h-11 object-contain flex-shrink-0 select-none pointer-events-none"
                       draggable={false}
                     />
                     <h1
-                      className="text-[26px] xs:text-[28px] sm:text-[34px] md:text-[40px] leading-tight tracking-tight font-normal text-stone-900 min-h-[44px] break-words"
+                      className="text-[24px] sm:text-[30px] md:text-[36px] leading-tight tracking-tight font-normal text-stone-900 min-h-[38px] break-words"
                       style={{ fontFamily: FONT_HEADING }}
                     >
                       {greeting || ' '}
@@ -1896,7 +1956,7 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
                   {switchingHistory ? (
                     <ChatSwitchSkeleton />
                   ) : (
-                    <div className="px-3 sm:px-5 pt-2 pb-10">
+                    <div className="px-3 sm:px-5 pt-2" style={{ paddingBottom: isMobile ? inputBarH + 12 : 40 }}>
                       <div className="max-w-3xl mx-auto space-y-5 sm:space-y-6">
                         {/* Earlier general chat (before the scan) — always stays on screen */}
                         {preMessages.map((turn, i) =>
@@ -1987,24 +2047,61 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
                           )
                         )}
 
-                        <div ref={chatEndRef} />
+                        {isMobile && showDisclaimer && (
+                          <p
+                            className="text-center text-[13px] text-stone-400 pt-3 pb-1"
+                            style={{ fontFamily: FONT_BODY }}
+                          >
+                            Custos AI can make mistakes. Double-check important results.
+                          </p>
+                        )}
+
+                        <div ref={chatEndRef} style={isMobile ? { scrollMarginBottom: inputBarH + 12 } : undefined} />
                       </div>
                     </div>
                   )}
                 </div>
+
+                {/* PHONE ONLY — floating input: chat scrolls under it and stays visible (lightly blurred) below it */}
+                {isMobile && (
+                  <div className="absolute inset-x-0 bottom-0 z-20 pointer-events-none">
+                    <div
+                      aria-hidden
+                      className="absolute inset-0 backdrop-blur-[1px] bg-[#FCFCFC]/10"
+                      style={{
+                        WebkitMaskImage: 'linear-gradient(to top, #000 62%, transparent)',
+                        maskImage: 'linear-gradient(to top, #000 62%, transparent)',
+                      }}
+                    />
+                    <div
+                      ref={inputBarRef}
+                      className="relative px-3 sm:px-5 pt-6 pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+                    >
+                      <div className="max-w-3xl mx-auto pointer-events-auto">
+                        {renderInputBox('chat')}
+                        {shake && (
+                          <p className="text-[13px] text-red-500 mt-2 ml-3 font-medium">Please type or paste something to scan.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              <div className={`flex-shrink-0 px-3 sm:px-5 md:px-6 pb-[max(1rem,env(safe-area-inset-bottom))] bg-transparent`}>
-                <div className="max-w-3xl mx-auto">
-                  {renderInputBox('chat')}
-                  {shake && (
-                    <p className="text-[13px] text-red-500 mt-2 ml-3 font-medium">Please type or paste something to scan.</p>
-                  )}
-                  <p className="text-center text-[12px] text-stone-400 mt-2.5" style={{ fontFamily: FONT_BODY }}>
-                    Custos AI can make mistakes. Double-check important results.
-                  </p>
+              {/* DESKTOP — original layout: input fixed under the chat, note below it */}
+              {!isMobile && (
+                <div className="flex-shrink-0 px-3 sm:px-5 md:px-6 pb-[max(1rem,env(safe-area-inset-bottom))] bg-transparent">
+                  <div className="max-w-3xl mx-auto">
+                    {renderInputBox('chat')}
+                    {shake && (
+                      <p className="text-[13px] text-red-500 mt-2 ml-3 font-medium">Please type or paste something to scan.</p>
+                    )}
+                    <p className="text-center text-[12px] text-stone-400 mt-2.5" style={{ fontFamily: FONT_BODY }}>
+                      Custos AI can make mistakes. Double-check important results.
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
             </>
           )}
         </div>
@@ -2030,6 +2127,39 @@ export const MainArea: React.FC<ScannerProps> = ({ onScan }) => {
           onConfirm={handleConfirmPendingScan}
           onCancel={handleCancelPendingScan}
         />
+      )}
+
+      {renaming && isMobile && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-5">
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-[400px] p-6" style={{ fontFamily: FONT_BODY }}>
+            <h4 className="text-[22px] font-medium text-stone-900 mb-5">Rename</h4>
+            <input
+              autoFocus
+              value={renameValue}
+              onChange={(e) => setRenameValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && renameValue.trim() && renameValue.trim() !== topHeaderLabel) handleRenameCommit();
+                if (e.key === 'Escape') setRenaming(false);
+              }}
+              className="w-full text-[16px] text-stone-900 bg-white rounded-2xl px-4 py-3.5 outline-none border-2 border-blue-500"
+            />
+            <div className="grid grid-cols-2 gap-3 mt-5">
+              <button
+                onClick={() => setRenaming(false)}
+                className="py-3 rounded-full text-[16px] font-medium text-stone-900 border border-stone-200 hover:bg-stone-50 active:bg-stone-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRenameCommit}
+                disabled={!renameValue.trim() || renameValue.trim() === topHeaderLabel}
+                className="py-3 rounded-full text-[16px] font-medium text-white bg-stone-900 hover:bg-black disabled:bg-stone-300 disabled:text-white/80 disabled:cursor-not-allowed transition-colors"
+              >
+                Rename
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {confirmDeleteId && (

@@ -249,7 +249,7 @@ function SeverityBadge({ riskLevel }: { riskLevel: string }) {
   } as const;
   const m = cfg[riskLevel as keyof typeof cfg] ?? cfg.low;
   return (
-    <span className={`inline-flex items-center px-3 py-1.5 rounded text-[12px] font-bold tracking-wider uppercase whitespace-nowrap ${m.cls}`}>
+    <span className={`inline-flex items-center px-3 py-1.5 rounded text-[12px] font-semibold tracking-wider uppercase whitespace-nowrap ${m.cls}`}>
       {m.label}
     </span>
   );
@@ -277,9 +277,9 @@ function Masthead({ result, data }: { result: ScamResult; data: ReportDocumentDa
   } = data;
 
   const severityCls =
-    result.riskLevel === 'high'   ? 'text-red-600 font-bold'
-    : result.riskLevel === 'medium' ? 'text-orange-500 font-bold'
-    : 'text-emerald-600 font-bold';
+    result.riskLevel === 'high'   ? 'text-red-600 font-semibold'
+    : result.riskLevel === 'medium' ? 'text-orange-500 font-semibold'
+    : 'text-emerald-600 font-semibold';
 
   const fixedRows = [
     { l: 'Report ID',    lv: reportId,        r: 'Date Generated', rv: formattedDate,    rColored: false },
@@ -290,15 +290,15 @@ function Masthead({ result, data }: { result: ScamResult; data: ReportDocumentDa
   const allRows = [...fixedRows, ...scanMetaRows];
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between gap-3 pb-4 border-b-2 border-slate-800">
-        <div className="text-[22px] font-black text-slate-900 tracking-tight leading-none">
+    <div className="space-y-5 min-w-0">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 pb-4 border-b-2 border-slate-800">
+        <div className="text-[22px] font-semibold text-slate-900 tracking-tight leading-none">
           Custos AI
         </div>
         <SeverityBadge riskLevel={result.riskLevel} />
       </div>
 
-      <h1 className="text-[22px] sm:text-[24px] font-bold text-slate-900 leading-snug tracking-tight">
+      <h1 className="text-[21px] sm:text-[24px] font-semibold text-slate-900 leading-snug tracking-tight [overflow-wrap:anywhere]">
         {reportTitle}
       </h1>
 
@@ -312,13 +312,13 @@ function Masthead({ result, data }: { result: ScamResult; data: ReportDocumentDa
               <div className="text-[12px] font-medium uppercase tracking-wide text-slate-500 mb-0.5">
                 {row.l}
               </div>
-              <div className="text-slate-900 font-semibold leading-snug break-words">{row.lv}</div>
+              <div className="text-slate-900 font-medium leading-snug [overflow-wrap:anywhere]">{row.lv}</div>
             </div>
             <div className="px-4 py-3 min-w-0">
               <div className="text-[12px] font-medium uppercase tracking-wide text-slate-500 mb-0.5">
                 {row.r}
               </div>
-              <div className={`leading-snug break-words ${row.rColored ? severityCls : 'text-slate-900 font-semibold'}`}>
+              <div className={`leading-snug break-words ${row.rColored ? severityCls : 'text-slate-900 font-medium'}`}>
                 {row.rv}
               </div>
             </div>
@@ -338,11 +338,11 @@ function ExecutiveSummary({ result }: { result: ScamResult }) {
     : { wrap: 'bg-red-50 border-l-4 border-red-500',         title: 'text-red-700' };
 
   return (
-    <div className={`rounded-r-lg px-5 py-4 ${s.wrap}`}>
-      <div className={`text-[13px] font-bold uppercase tracking-wider mb-2 ${s.title}`}>
+    <div className={`rounded-r-lg px-4 sm:px-5 py-4 ${s.wrap}`}>
+      <div className={`text-[13px] font-semibold uppercase tracking-wider mb-2 ${s.title}`}>
         Executive Summary
       </div>
-      <p className="text-[15px] text-slate-800 leading-[1.7] break-words">{result.explanation}</p>
+      <p className="text-[14.5px] sm:text-[15px] text-slate-800 leading-[1.7] [overflow-wrap:anywhere]">{result.explanation}</p>
     </div>
   );
 }
@@ -358,7 +358,7 @@ function InterceptedContent({ inputContent, inputType }: { inputContent: string;
           ? 'The malicious artifact consists of the following URL submitted for analysis:'
           : `The malicious artifact consists of the following ${inputType === 'sms' ? 'SMS text string' : 'message content'} transmitted to the target device:`}
       </p>
-      <div className="bg-slate-900 text-blue-100 rounded-lg p-4 font-mono text-[13px] break-all whitespace-pre-wrap leading-relaxed">
+      <div className="bg-slate-900 text-blue-100 rounded-lg p-3 sm:p-4 font-mono text-[12.5px] sm:text-[13px] break-all whitespace-pre-wrap leading-relaxed max-w-full">
         {inputContent || '(no content provided)'}
       </div>
     </section>
@@ -378,10 +378,10 @@ function FindingsList({ findings }: { findings: string[] }) {
 
         return (
           <li key={fi} className="flex gap-2 text-[14px] leading-[1.6]">
-            <span className="text-slate-900 font-black flex-shrink-0 mt-px">•</span>
+            <span className="text-slate-900 flex-shrink-0 mt-px">•</span>
             <span className="break-words min-w-0">
               {heading && (
-                <span className="font-bold text-slate-900 mr-1">{heading}</span>
+                <span className="font-semibold text-slate-900 mr-1">{heading}</span>
               )}
               <span className="text-slate-800">{body}</span>
             </span>
@@ -418,9 +418,9 @@ function IndicatorsTable({ indicators }: { indicators: ThreatIndicator[] }) {
           </colgroup>
           <thead>
             <tr className="bg-slate-900 text-white text-[13px]">
-              <th className="text-left font-bold px-4 py-3">Element Analyzed</th>
-              <th className="text-left font-bold px-3 py-3 border-l border-slate-700">Assessment</th>
-              <th className="text-left font-bold px-4 py-3 border-l border-slate-700">
+              <th className="text-left font-semibold px-4 py-3">Element Analyzed</th>
+              <th className="text-left font-semibold px-3 py-3 border-l border-slate-700">Assessment</th>
+              <th className="text-left font-semibold px-4 py-3 border-l border-slate-700">
                 Technical Context &amp; Findings
               </th>
             </tr>
@@ -429,7 +429,7 @@ function IndicatorsTable({ indicators }: { indicators: ThreatIndicator[] }) {
             {indicators.map((row, idx) => (
               <tr key={idx} className={idx % 2 === 1 ? 'bg-slate-50' : 'bg-white'}>
                 <td className="align-top px-4 py-4 border-r border-slate-200">
-                  <div className="font-bold text-slate-900 text-[14px] leading-snug break-words">
+                  <div className="font-semibold text-slate-900 text-[14px] leading-snug break-words">
                     {row.element}
                   </div>
                   <div className="text-[12.5px] text-slate-600 mt-1 break-all leading-relaxed">
@@ -437,7 +437,7 @@ function IndicatorsTable({ indicators }: { indicators: ThreatIndicator[] }) {
                   </div>
                 </td>
                 <td className="align-top px-3 py-4 border-r border-slate-200">
-                  <span className={`font-bold text-[12px] leading-snug uppercase tracking-wide ${ASSESS_CLS[row.assessment] ?? 'text-slate-600'}`}>
+                  <span className={`font-semibold text-[12px] leading-snug uppercase tracking-wide ${ASSESS_CLS[row.assessment] ?? 'text-slate-600'}`}>
                     {row.assessment}
                   </span>
                 </td>
@@ -456,10 +456,10 @@ function IndicatorsTable({ indicators }: { indicators: ThreatIndicator[] }) {
           <div key={idx} className="border border-slate-300 rounded-lg overflow-hidden">
             <div className="bg-slate-900 px-4 py-3 space-y-1">
               <div className="flex items-start justify-between gap-2">
-                <span className="font-bold text-[14px] text-white leading-snug break-words flex-1 min-w-0">
+                <span className="font-semibold text-[14px] text-white leading-snug break-words flex-1 min-w-0">
                   {row.element}
                 </span>
-                <span className={`text-[11px] font-bold uppercase tracking-wide flex-shrink-0 px-2 py-0.5 rounded bg-white/10 whitespace-nowrap ${ASSESS_CLS[row.assessment] ?? 'text-slate-300'}`}>
+                <span className={`text-[11px] font-semibold uppercase tracking-wide flex-shrink-0 px-2 py-0.5 rounded bg-white/10 whitespace-nowrap ${ASSESS_CLS[row.assessment] ?? 'text-slate-300'}`}>
                   {row.assessment}
                 </span>
               </div>
@@ -488,9 +488,9 @@ function Recommendations({ safetyTips }: { safetyTips: SafetyTip[] }) {
       <ul className="space-y-3">
         {safetyTips.map((item, idx) => (
           <li key={idx} className="flex gap-2 text-[14.5px] leading-[1.65]">
-            <span className="font-black text-slate-900 flex-shrink-0">•</span>
+            <span className="text-slate-900 flex-shrink-0">•</span>
             <span className="break-words min-w-0">
-              <span className="font-bold text-slate-900">{item.headline}:</span>{' '}
+              <span className="font-semibold text-slate-900">{item.headline}:</span>{' '}
               <span className="text-slate-800">{item.tip}</span>
             </span>
           </li>
@@ -515,7 +515,7 @@ function DossierFooter() {
 function SectionHeading({ n, title }: { n: number; title: string }) {
   return (
     <h2
-      className="text-[16px] sm:text-[17px] font-bold text-slate-900 border-l-4 border-blue-600 pl-3 leading-snug"
+      className="text-[16px] sm:text-[17px] font-semibold text-slate-900 border-l-4 border-blue-600 pl-3 leading-snug [overflow-wrap:anywhere]"
       dangerouslySetInnerHTML={{ __html: `${n}. ${title}` }}
     />
   );
@@ -550,7 +550,7 @@ export function ReportDocument({
 }: ReportDocumentProps) {
   const doc = data ?? buildReportDocumentData(result, inputContent, inputType);
   return (
-    <div className="p-1 sm:p-2 space-y-8">
+    <div className="p-1 sm:p-2 space-y-6 sm:space-y-8 min-w-0 max-w-full">
       <Masthead result={result} data={doc} />
       <ExecutiveSummary result={result} />
       <InterceptedContent inputContent={inputContent} inputType={inputType} />

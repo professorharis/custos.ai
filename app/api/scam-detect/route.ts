@@ -57,6 +57,15 @@ const MODEL = "openai/gpt-oss-20b";
 const MAX_INPUT_CHARS = 8000;
 const MAX_URLS_SCANNED = 3;
 
+// ─── Time budgets (keep the whole scan well under ~30s) ─────────────────
+const TECH_SCAN_BUDGET_MS = 9000; // live link check, per link, hard cap
+const TOTAL_BUDGET_MS = 55000; // whole request
+const MODEL_TIMEOUT_MS = 30000; // one AI call
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([p, new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
+}
+
 // ─── SSRF protection ─────────────────────────────────────────────────────
 const blocked = new BlockList();
 [
@@ -92,7 +101,10 @@ async function isBlockedTarget(hostname: string): Promise<boolean> {
   if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) return true;
   if (isIP(h)) return isBlockedIp(h);
   try {
-    const records = await dnsLookup(h, { all: true });
+    const records = await Promise.race([
+      dnsLookup(h, { all: true }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("dns timeout")), 3000)),
+    ]);
     return records.some((r) => isBlockedIp(r.address));
   } catch {
     return false; // unresolvable: the fetch will fail on its own and be reported
@@ -154,7 +166,7 @@ function getTlsCertificate(hostname: string, port = 443): Promise<TlsInfo> {
       port,
       servername: hostname,
       rejectUnauthorized: false,
-      timeout: 6000,
+      timeout: 4000,
     });
 
     socket.once("secureConnect", () => {
@@ -195,7 +207,7 @@ function getTlsCertificate(hostname: string, port = 443): Promise<TlsInfo> {
   });
 }
 
-async function followRedirects(startUrl: string, maxHops = 5) {
+async function followRedirects(startUrl: string, maxHops = 4) {
   const chain: string[] = [];
   let current = startUrl;
   let httpStatus: number | null = null;
@@ -222,7 +234,7 @@ async function followRedirects(startUrl: string, maxHops = 5) {
       const res = await fetch(current, {
         method: "GET",
         redirect: "manual",
-        signal: AbortSignal.timeout(6000),
+        signal: AbortSignal.timeout(4000),
         headers: { "User-Agent": "CustosAI-Scanner/2.0 (+security-scan)" },
       });
       httpStatus = res.status;
@@ -669,7 +681,7 @@ function buildSystemPrompt(type: ScanType): string {
 }
 
 // ─── Model call, parsing, grounding ──────────────────────────────────────
-async function callModel(system: string, user: string, apiKey: string, temperature: number): Promise<any> {
+async function callModel(system: string, user: string, apiKey: string, temperature: number, timeoutMs = MODEL_TIMEOUT_MS): Promise<any> {
   let lastStatus = 0;
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await fetch(GROQ_URL, {
@@ -683,9 +695,11 @@ async function callModel(system: string, user: string, apiKey: string, temperatu
         ],
         temperature,
         max_tokens: 3000,
+        // gpt-oss is a reasoning model: "low" keeps the hidden thinking short (big speed-up)
+        reasoning_effort: "low",
         response_format: { type: "json_object" },
       }),
-      signal: AbortSignal.timeout(35000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     lastStatus = res.status;
     if ((res.status === 429 || res.status >= 500) && attempt === 0) {
@@ -766,6 +780,7 @@ function normalizeRecommendation(r: unknown): string {
 
 // ─── Route handler ───────────────────────────────────────────────────────
 export async function POST(req: Request) {
+  const startedAt = Date.now();
   try {
     const { message: rawMessage, type: rawType } = await req.json();
     const message = String(rawMessage ?? "").trim().slice(0, MAX_INPUT_CHARS);
@@ -787,7 +802,7 @@ export async function POST(req: Request) {
     const toScan = (type === "url" ? [message] : urls).slice(0, MAX_URLS_SCANNED);
     const reports = await Promise.all(
       toScan.map((u) =>
-        runUrlTechnicalScan(u).catch((e) => {
+        withTimeout(runUrlTechnicalScan(u), TECH_SCAN_BUDGET_MS).catch((e) => {
           console.error("Technical URL scan failed:", e);
           return null;
         })
@@ -800,7 +815,7 @@ export async function POST(req: Request) {
         technicalBlocks.push(formatTechnicalReportForPrompt(r));
         techFlags += techRedFlagCount(r);
       } else {
-        technicalBlocks.push(`TECHNICAL SCAN (${toScan[i]}): live check failed unexpectedly. Judge on structure/lexical indicators only.`);
+        technicalBlocks.push(`TECHNICAL SCAN (${toScan[i]}): live check did not finish in time or failed (the site may be slow, blocked or offline). Judge on structure/lexical indicators only.`);
       }
     });
     if (urls.length > MAX_URLS_SCANNED)
@@ -815,6 +830,9 @@ export async function POST(req: Request) {
     let analysis: AnalysisResponse | null = null;
     let lastRaw = "";
     for (let pass = 0; pass < 2; pass++) {
+      const remaining = TOTAL_BUDGET_MS - (Date.now() - startedAt);
+      // second try only if there is enough time left (a full retry needs ~25s when we already have a report)
+      if (pass > 0 && remaining < (analysis ? 25000 : 10000)) break;
       const prompt =
         pass === 0
           ? userPrompt
@@ -822,7 +840,7 @@ export async function POST(req: Request) {
 
       let result;
       try {
-        result = await callModel(system, prompt, API_KEY, pass === 0 ? 0.3 : 0.4);
+        result = await callModel(system, prompt, API_KEY, pass === 0 ? 0.3 : 0.4, Math.max(8000, Math.min(MODEL_TIMEOUT_MS, remaining)));
       } catch (fetchErr: any) {
         console.error("Groq fetch failed:", fetchErr);
         if (analysis) break; // keep first parsed result
@@ -960,6 +978,8 @@ export async function POST(req: Request) {
         if (!safetyTips.some((s) => s.headline === t.headline)) safetyTips.push(t);
       }
     }
+
+    console.log(`scam-detect finished in ${Date.now() - startedAt}ms (type=${type}, urls=${urls.length})`);
 
     return NextResponse.json({
       riskScore: score,

@@ -39,7 +39,7 @@ import { ErrorCard } from '../ErrorCard';
 import { classifyError, type ErrorCode, type ErrorAction } from '@/lib/errorTypes';
 
 // Body text size (ChatGPT / Claude style reading size)
-const BODY_TEXT = 'text-[16px] sm:text-[17px] leading-[1.65]';
+const BODY_TEXT = 'text-[15px] sm:text-[16px] leading-[1.65]';
 
 // Long user content is collapsed after this many characters
 const COLLAPSE_AT = 280;
@@ -69,7 +69,7 @@ function isSoleBoldParagraph(children: any): string | null {
 
 export const markdownComponents = {
   strong: ({ children }: any) => (
-    <strong className="font-semibold text-gray-900">{children}</strong>
+    <strong className="font-[580] text-gray-900">{children}</strong>
   ),
   em: ({ children }: any) => <em className="italic text-gray-800">{children}</em>,
 
@@ -79,7 +79,7 @@ export const markdownComponents = {
       return (
         <div className="mt-4 mb-2 first:mt-0">
           <div className="inline-block border border-gray-200 rounded-lg px-3 py-1.5 bg-gray-50">
-            <span className="text-[14px] font-semibold text-gray-900 tracking-tight">{label}</span>
+            <span className="text-[14px] font-[560] text-gray-900 tracking-tight">{label}</span>
           </div>
         </div>
       );
@@ -91,7 +91,7 @@ export const markdownComponents = {
     <ul className="list-disc pl-6 mb-4 space-y-1.5 marker:text-gray-500 text-gray-800">{children}</ul>
   ),
   ol: ({ children }: any) => (
-    <ol className="list-decimal pl-6 mb-4 space-y-2 marker:text-gray-600 marker:font-semibold text-gray-800">
+    <ol className="list-decimal pl-6 mb-4 space-y-2 marker:text-gray-600 marker:font-medium text-gray-800">
       {children}
     </ol>
   ),
@@ -117,13 +117,13 @@ export const markdownComponents = {
   ),
 
   h1: ({ children }: any) => (
-    <h2 className="text-[21px] font-bold text-gray-900 mt-6 mb-2.5 first:mt-0 tracking-tight">{children}</h2>
+    <h2 className="text-[19px] font-[560] text-gray-900 mt-6 mb-2.5 first:mt-0 tracking-tight">{children}</h2>
   ),
   h2: ({ children }: any) => (
-    <h3 className="text-[19px] font-semibold text-gray-900 mt-6 mb-2 first:mt-0 tracking-tight">{children}</h3>
+    <h3 className="text-[17.5px] font-[560] text-gray-900 mt-6 mb-2 first:mt-0 tracking-tight">{children}</h3>
   ),
   h3: ({ children }: any) => (
-    <h4 className="text-[17px] font-semibold text-gray-900 mt-4 mb-1.5 first:mt-0">{children}</h4>
+    <h4 className="text-[16px] font-[560] text-gray-900 mt-4 mb-1.5 first:mt-0">{children}</h4>
   ),
 
   table: ({ children }: any) => (
@@ -134,7 +134,7 @@ export const markdownComponents = {
   thead: ({ children }: any) => <thead className="bg-gray-50">{children}</thead>,
   tr: ({ children }: any) => <tr className="border-b border-gray-100 last:border-b-0">{children}</tr>,
   th: ({ children }: any) => (
-    <th className="px-3.5 py-2.5 font-semibold text-gray-900 align-top whitespace-nowrap">{children}</th>
+    <th className="px-3.5 py-2.5 font-[560] text-gray-900 align-top whitespace-nowrap">{children}</th>
   ),
   td: ({ children }: any) => (
     <td className="px-3.5 py-2.5 text-gray-700 align-top leading-relaxed [&>p]:m-0">{children}</td>
@@ -164,7 +164,7 @@ export function BoldText({ text }: { text: string }) {
       {parts.map((part, i) => {
         if (part.startsWith('**') && part.endsWith('**')) {
           return (
-            <strong key={i} className="font-semibold text-stone-900">
+            <strong key={i} className="font-[580] text-stone-900">
               {part.slice(2, -2)}
             </strong>
           );
@@ -298,7 +298,7 @@ function GmailCard({ content }: { content: string }) {
       </div>
 
       <div className="px-4 sm:px-5 pt-4 pb-1 flex items-start gap-2">
-        <h4 className="flex-1 min-w-0 text-[19px] sm:text-[21px] leading-snug text-stone-900 break-words" style={{ fontFamily: FONT_BODY }}>
+        <h4 className="flex-1 min-w-0 text-[17px] sm:text-[19px] leading-snug text-stone-900 break-words" style={{ fontFamily: FONT_BODY }}>
           {e.subject}
         </h4>
         <span className="mt-1 flex-shrink-0 text-[11px] text-stone-600 bg-stone-100 rounded px-1.5 py-0.5">Inbox</span>
@@ -310,7 +310,7 @@ function GmailCard({ content }: { content: string }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-baseline gap-x-2">
-            <span className="text-[15px] font-semibold text-stone-900 break-all">{e.name}</span>
+            <span className="text-[15px] font-[560] text-stone-800 break-all">{e.name}</span>
             {e.address && e.address !== e.name && (
               <span className="text-[13px] text-stone-500 break-all">&lt;{e.address}&gt;</span>
             )}
@@ -399,13 +399,13 @@ function LinkCard({ content }: { content: string }) {
           <Globe className="w-5 h-5 text-blue-600" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-[18px] sm:text-[19px] font-semibold text-stone-900 break-all leading-snug">{primary.host}</div>
+          <div className="text-[16.5px] sm:text-[17.5px] font-[560] text-stone-800 break-all leading-snug">{primary.host}</div>
           <div className="mt-1 text-[13.5px] text-blue-700 font-mono break-all leading-relaxed">
             {primary.full.length > 120 ? primary.full.slice(0, 120) + '…' : primary.full}
           </div>
           <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
             <span
-              className={`inline-flex items-center gap-1 text-[11px] font-semibold rounded-full px-2 py-0.5 border ${
+              className={`inline-flex items-center gap-1 text-[11px] font-medium rounded-full px-2 py-0.5 border ${
                 isUnsafe
                   ? 'bg-red-50 text-red-700 border-red-200'
                   : primary.secure
@@ -429,7 +429,7 @@ function LinkCard({ content }: { content: string }) {
 
       {links.length > 1 && (
         <div className="px-4 sm:px-5 pb-3 -mt-1">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-stone-400 mb-1">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-stone-400 mb-1">
             Other links in this message
           </div>
           <ul className="space-y-0.5">
@@ -461,7 +461,7 @@ function SmsBubble({ content }: { content: string }) {
           <MessageSquare className="w-3.5 h-3.5 text-white" fill="currentColor" strokeWidth={0} />
         </div>
         <div className="leading-tight">
-          <div className="text-[13px] font-semibold text-stone-800">Text Message</div>
+          <div className="text-[13px] font-[560] text-stone-800">Text Message</div>
           <div className="text-[11px] text-stone-400">{sender ? `Mentions ${sender}` : 'Unknown sender'}</div>
         </div>
       </div>
@@ -566,11 +566,11 @@ export function ThinkingBlock({ steps }: { steps: string[] }) {
   };
 
   return (
-    <div className="flex items-center gap-3 px-1 py-2.5 w-full">
+    <div className="flex items-center gap-2.5 px-1 py-2 w-full">
       <style>{`@keyframes thinkShimmer{0%{background-position:150% 0}100%{background-position:-50% 0}}`}</style>
 
       {/* 3 small spinning dots */}
-      <svg className="w-5 h-5 flex-shrink-0 animate-spin text-stone-500" viewBox="0 0 24 24" aria-hidden>
+      <svg className="w-4 h-4 flex-shrink-0 animate-spin text-stone-500" viewBox="0 0 24 24" aria-hidden>
         <circle cx="12" cy="4" r="2.2" fill="currentColor" />
         <circle cx="19.5" cy="16.5" r="2.2" fill="currentColor" opacity="0.65" />
         <circle cx="4.5" cy="16.5" r="2.2" fill="currentColor" opacity="0.35" />
@@ -580,7 +580,7 @@ export function ThinkingBlock({ steps }: { steps: string[] }) {
         key={`${label}-${loop}`}
         dir={dir}
         onAnimationEnd={handleSweepEnd}
-        className="inline-block max-w-full break-words text-[17px] sm:text-[18px] font-medium"
+        className="inline-block max-w-full break-words text-[14.5px] sm:text-[15.5px] font-medium"
         style={{
           fontFamily,
           backgroundImage:
@@ -590,7 +590,7 @@ export function ThinkingBlock({ steps }: { steps: string[] }) {
           backgroundClip: 'text',
           color: 'transparent',
           WebkitTextFillColor: 'transparent',
-          animation: 'thinkShimmer 1.8s linear 1',
+          animation: 'thinkShimmer 1.5s linear 1',
         }}
       >
         {label}
@@ -650,7 +650,7 @@ export function AnalysisSteps({
               <div key={b.key} className="relative flex gap-3" style={style}>
                 <div className="relative z-10 w-3 h-3 rounded-full bg-stone-300 flex-shrink-0 mt-1.5" />
                 <div className="flex-1 min-w-0 pt-0.5">
-                  <h4 className="text-[17px] sm:text-[18px] font-semibold text-stone-800 mb-1">
+                  <h4 className="text-[17px] sm:text-[18px] font-[560] text-stone-800 mb-1">
                     <ScriptAwareText text={b.data.heading} />
                   </h4>
                   <p className={`${BODY_TEXT} text-stone-700 break-words`}>
@@ -666,7 +666,7 @@ export function AnalysisSteps({
               <div key={b.key} className="relative flex gap-3" style={style}>
                 <div className="relative z-10 w-3 h-3 rounded-full bg-stone-500 flex-shrink-0 mt-1.5" />
                 <div className="flex-1 min-w-0 pt-0.5">
-                  <h4 className="text-[17px] sm:text-[18px] font-semibold text-stone-800 mb-1">Summary</h4>
+                  <h4 className="text-[17px] sm:text-[18px] font-[560] text-stone-800 mb-1">Summary</h4>
                   <p className={`${BODY_TEXT} text-stone-700 break-words`}>
                     <ScriptAwareText text={b.data} />
                   </p>
@@ -680,13 +680,13 @@ export function AnalysisSteps({
               <div key={b.key} className="relative flex gap-3" style={style}>
                 <div className="relative z-10 w-3 h-3 rounded-full bg-blue-500 flex-shrink-0 mt-1.5" />
                 <div className="flex-1 min-w-0 pt-0.5">
-                  <h4 className="text-[17px] sm:text-[18px] font-semibold text-stone-800 mb-2">{b.heading}</h4>
+                  <h4 className="text-[17px] sm:text-[18px] font-[560] text-stone-800 mb-2">{b.heading}</h4>
                   {b.data.length === 1 ? (
                     <p className={`${BODY_TEXT} text-stone-700 break-words`}>
                       <ScriptAwareText text={b.data[0]} />
                     </p>
                   ) : (
-                    <ol className="list-decimal pl-6 space-y-2 marker:text-stone-600 marker:font-semibold">
+                    <ol className="list-decimal pl-6 space-y-2 marker:text-stone-600 marker:font-medium">
                       {b.data.map((point, idx) => (
                         <li key={idx} className={`pl-1 ${BODY_TEXT} text-stone-700 break-words`}>
                           <ScriptAwareText text={point} />
@@ -857,18 +857,50 @@ export function ChatHeaderMenu({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Mobile chat header menu
+// Mobile header pieces (hamburger, new scan, ⋮ dropdown) — Claude-app style
 // ─────────────────────────────────────────────────────────────────────────
 
+export function HamburgerIcon({ className = 'w-[26px] h-[26px]' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden>
+      <path d="M3 7h18" />
+      <path d="M3 12h12" />
+      <path d="M3 17h18" />
+    </svg>
+  );
+}
+
+export function NewChatButton({ onClick }: { onClick: () => void }) {
+  // Clean outlined "+" — no filled background
+  return (
+    <button
+      onClick={onClick}
+      title="New scan"
+      aria-label="New scan"
+      className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 text-stone-800 hover:bg-stone-200/60 active:bg-stone-200/60 transition-colors"
+    >
+      <svg className="w-[24px] h-[24px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" aria-hidden>
+        <circle cx="12" cy="12" r="9.25" />
+        <path d="M12 8v8M8 12h8" />
+      </svg>
+    </button>
+  );
+}
+
 export function MobileChatHeaderMenu({
+  title,
   onShare,
+  onRename,
   onPin,
   onDelete,
   onOpenDocument,
   onOpenPresentation,
   pinned,
 }: {
+  /** chat name — shown (grey) at the top of the dropdown */
+  title: string;
   onShare: () => void;
+  onRename: () => void;
   onPin: () => void;
   onDelete: () => void;
   onOpenDocument: () => void;
@@ -880,58 +912,62 @@ export function MobileChatHeaderMenu({
 
   useEffect(() => {
     if (!open) return;
-    const handler = (e: MouseEvent) => {
+    const handler = (e: Event) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    document.addEventListener('touchstart', handler);
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('touchstart', handler);
+    };
   }, [open]);
+
+  const item = 'w-full flex items-center gap-2.5 px-3.5 py-2 text-[14px] text-stone-800 active:bg-stone-100 hover:bg-stone-50 transition-colors text-left';
+  const icon = 'w-[16px] h-[16px] text-stone-500 flex-shrink-0';
+  const run = (fn: () => void) => () => {
+    fn();
+    setOpen(false);
+  };
 
   return (
     <div className="relative flex-shrink-0" ref={ref}>
       <button
         onClick={() => setOpen((o) => !o)}
         title="More options"
-        className={`p-1.5 rounded-lg transition-colors ${
-          open ? 'bg-stone-200/70 text-stone-800' : 'text-stone-500 hover:bg-stone-100 hover:text-stone-700'
+        aria-label="More options"
+        aria-expanded={open}
+        className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors ${
+          open ? 'bg-stone-200/70 text-stone-900' : 'text-stone-800 active:bg-stone-200/60'
         }`}
       >
-        <MoreVertical className="w-[18px] h-[18px]" />
+        <MoreVertical className="w-[20px] h-[20px]" />
       </button>
+
       {open && (
-        <div className="absolute right-0 top-full mt-1 w-48 bg-white border border-black/10 rounded-lg shadow-lg py-1 z-30">
-          <button
-            onClick={() => { onShare(); setOpen(false); }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-stone-700 hover:bg-stone-100 transition-colors"
-          >
-            <Share2 className="w-3.5 h-3.5 text-stone-500" /> Share
+        <div className="absolute right-0 top-full mt-2 w-[188px] max-w-[calc(100vw-24px)] bg-white border border-black/[0.07] rounded-xl shadow-[0_6px_20px_rgba(0,0,0,0.12)] py-1 z-40 animate-[scyraFadeIn_0.15s_ease-out]">
+          <div className="px-3.5 pt-1 pb-1.5 text-[12px] leading-snug text-stone-400 truncate border-b border-stone-100 mb-0.5">{title}</div>
+
+          <button onClick={run(onShare)} className={item}>
+            <Share2 className={icon} strokeWidth={1.7} /> Share
           </button>
-          <button
-            onClick={() => { onPin(); setOpen(false); }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-stone-700 hover:bg-stone-100 transition-colors"
-          >
-            <Pin className={`w-3.5 h-3.5 ${pinned ? 'text-stone-800 fill-stone-800' : 'text-stone-500'}`} />
+          <button onClick={run(onRename)} className={item}>
+            <Pencil className={icon} strokeWidth={1.7} /> Rename
+          </button>
+          <button onClick={run(onPin)} className={item}>
+            <Pin className={`${icon} ${pinned ? 'fill-stone-700 text-stone-700' : ''}`} strokeWidth={1.7} />
             {pinned ? 'Unpin' : 'Pin'}
           </button>
-          <div className="my-1 h-px bg-black/10" />
-          <button
-            onClick={() => { onOpenDocument(); setOpen(false); }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-stone-700 hover:bg-stone-100 transition-colors"
-          >
-            <span className="w-3.5 text-center">📄</span> View Document
+          <div className="my-0.5 h-px bg-stone-100" />
+          <button onClick={run(onOpenDocument)} className={item}>
+            <FileText className={icon} strokeWidth={1.7} /> View document
           </button>
-          <button
-            onClick={() => { onOpenPresentation(); setOpen(false); }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-stone-700 hover:bg-stone-100 transition-colors"
-          >
-            <span className="w-3.5 text-center">📊</span> View Presentation
+          <button onClick={run(onOpenPresentation)} className={item}>
+            <Presentation className={icon} strokeWidth={1.7} /> View presentation
           </button>
-          <div className="my-1 h-px bg-black/10" />
-          <button
-            onClick={() => { onDelete(); setOpen(false); }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-red-600 hover:bg-red-50 transition-colors"
-          >
-            <Trash2 className="w-3.5 h-3.5" /> Delete
+          <div className="my-0.5 h-px bg-stone-100" />
+          <button onClick={run(onDelete)} className={`${item} !text-red-600 active:!bg-red-50 hover:!bg-red-50`}>
+            <Trash2 className="w-[16px] h-[16px] text-red-500 flex-shrink-0" strokeWidth={1.7} /> Delete
           </button>
         </div>
       )}
@@ -989,7 +1025,7 @@ function Collapsible({
         className="inline-flex items-center gap-2 py-1 text-left text-stone-600 hover:text-stone-900 transition-colors"
       >
         <Icon className="w-[17px] h-[17px] text-stone-500" />
-        <span className="text-[15px] font-medium">{title}</span>
+        <span className="text-[14px] font-[560]">{title}</span>
         {typeof count === 'number' && <span className="text-[13px] text-stone-400">({count})</span>}
         <ChevronDown className={`w-4 h-4 text-stone-400 transition-transform duration-200 ${open ? 'rotate-180' : ''}`} />
       </button>
@@ -1048,13 +1084,13 @@ export function AiResultMessage({
     return lines.join('\n\n');
   }, [result, findings, recHeading]);
 
-  const h = 'text-[17px] sm:text-[18px] font-semibold text-stone-900 mt-6 mb-2';
+  const h = 'text-[16px] sm:text-[17px] font-[560] text-stone-800 mt-6 mb-2';
 
   return (
     <div className="min-w-0 text-stone-800" style={{ fontFamily: FONT_BODY }}>
       {/* Verdict: one plain line */}
       <p className={`${BODY_TEXT} mb-1`}>
-        <strong className="font-semibold text-stone-900">
+        <strong className="font-[560] text-stone-800">
           {getRiskLevelLabel(result.riskLevel)} ({result.riskScore}/100)
         </strong>
         {threatType && <> — {threatType}</>}
@@ -1073,7 +1109,7 @@ export function AiResultMessage({
           <ul className="list-disc pl-6 space-y-2.5 marker:text-stone-400">
             {findings.map((f, i) => (
               <li key={i} className={`${BODY_TEXT} pl-1`}>
-                <strong className="font-semibold text-stone-900">
+                <strong className="font-[560] text-stone-800">
                   <ScriptAwareText text={f.heading} />.
                 </strong>{' '}
                 <BoldText text={f.content} />
@@ -1102,8 +1138,8 @@ export function AiResultMessage({
         <Collapsible icon={AlertTriangle} title="Threat indicators" count={indicators.length}>
           <ul className="space-y-2 pt-2 list-disc pl-5 marker:text-stone-400">
             {indicators.map((ind, i) => (
-              <li key={i} className="text-[15px] text-stone-700 leading-relaxed break-words">
-                <span className="font-medium text-stone-900">{String(ind?.element ?? '')}</span>
+              <li key={i} className="text-[14px] text-stone-700 leading-relaxed break-words">
+                <span className="font-[560] text-stone-800">{String(ind?.element ?? '')}</span>
                 {ind?.assessment && <> ({String(ind.assessment).toLowerCase()})</>}: {String(ind?.value ?? '')}
               </li>
             ))}
@@ -1116,8 +1152,8 @@ export function AiResultMessage({
         <Collapsible icon={Lightbulb} title="Safety tips" count={tips.length}>
           <ul className="space-y-2 pt-2 list-disc pl-5 marker:text-stone-400">
             {tips.map((t, i) => (
-              <li key={i} className="text-[15px] text-stone-700 leading-relaxed">
-                {t.headline && <span className="font-semibold text-stone-900">{t.headline}. </span>}
+              <li key={i} className="text-[14px] text-stone-700 leading-relaxed">
+                {t.headline && <span className="font-[560] text-stone-800">{t.headline}. </span>}
                 {t.tip}
               </li>
             ))}
@@ -1146,7 +1182,7 @@ export function AiResultMessage({
                 <b.Icon className="w-5 h-5 text-stone-700" />
               </span>
               <span className="flex-1 min-w-0">
-                <span className="block text-[15px] font-semibold text-stone-900">{b.title}</span>
+                <span className="block text-[15px] font-[560] text-stone-800">{b.title}</span>
                 <span className="block text-[13px] text-stone-500 mt-0.5">{b.sub}</span>
               </span>
               <ChevronRight className="w-4 h-4 text-stone-400 flex-shrink-0 transition-transform group-hover:translate-x-0.5 group-hover:text-stone-600" />
@@ -1319,18 +1355,18 @@ export function NewScanConfirmModal({
         style={{ fontFamily: FONT_BODY }}
       >
         <p className="text-[15.5px] text-stone-700 leading-relaxed">
-          This looks like a new <span className="font-semibold text-stone-900">{contentLabel}</span>. Start a new scan?
+          This looks like a new <span className="font-medium text-stone-800">{contentLabel}</span>. Start a new scan?
         </p>
         <div className="flex justify-end gap-2 mt-4">
           <button
             onClick={onCancel}
-            className="px-3.5 py-1.5 rounded-lg text-[13px] font-semibold text-stone-600 hover:bg-stone-100 transition-colors"
+            className="px-3.5 py-1.5 rounded-lg text-[13px] font-medium text-stone-600 hover:bg-stone-100 transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className="px-3.5 py-1.5 rounded-lg text-[13px] font-semibold text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-sm"
+            className="px-3.5 py-1.5 rounded-lg text-[13px] font-medium text-white bg-blue-600 hover:bg-blue-700 transition-colors shadow-sm"
           >
             Start New Scan
           </button>
@@ -1374,20 +1410,20 @@ export function DeleteConfirmModal({
             <Trash2 className="w-4 h-4 text-red-600" />
           </div>
           <div className="flex-1 min-w-0 pt-0.5">
-            <h4 className="text-[16px] font-semibold text-stone-900 mb-1">{title}</h4>
+            <h4 className="text-[16px] font-[560] text-stone-800 mb-1">{title}</h4>
             <p className="text-[14px] text-stone-600 leading-relaxed">{description}</p>
           </div>
         </div>
         <div className="flex justify-end gap-2 mt-4">
           <button
             onClick={onCancel}
-            className="px-3.5 py-1.5 rounded-lg text-[13px] font-semibold text-stone-600 hover:bg-stone-100 transition-colors"
+            className="px-3.5 py-1.5 rounded-lg text-[13px] font-medium text-stone-600 hover:bg-stone-100 transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className="px-3.5 py-1.5 rounded-lg text-[13px] font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors shadow-sm"
+            className="px-3.5 py-1.5 rounded-lg text-[13px] font-medium text-white bg-red-600 hover:bg-red-700 transition-colors shadow-sm"
           >
             Delete
           </button>
